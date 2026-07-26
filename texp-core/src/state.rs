@@ -1,6 +1,4 @@
 use crate::grep::Match;
-use ratatui::prelude::Line;
-use ratatui::widgets::ListState;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
@@ -33,7 +31,6 @@ pub struct NavState {
     pub selected_files: HashSet<PathBuf>,
     pub path_segments: Vec<PathBuf>,
     pub path_cursor: usize,
-    pub list_state: ListState,
     pub sort_mode: SortMode,
     pub sort_reverse: bool,
     pub filter_input: String,
@@ -55,7 +52,6 @@ impl NavState {
             selected_files: HashSet::new(),
             path_segments: Vec::new(),
             path_cursor: 0,
-            list_state: ListState::default(),
             sort_mode: SortMode::ByName,
             sort_reverse: false,
             filter_input: String::new(),
@@ -74,9 +70,8 @@ pub struct PreviewState {
     pub preview_visible: bool,
     pub preview_scroll: usize,
     pub preview_is_md: bool,
-    pub preview_lines: Vec<Line<'static>>,
-    pub last_preview: Instant,
     pub pdf_cache: Vec<(PathBuf, String)>,
+    pub last_preview: Instant,
 }
 
 impl PreviewState {
@@ -86,9 +81,8 @@ impl PreviewState {
             preview_visible,
             preview_scroll: 0,
             preview_is_md: false,
-            preview_lines: Vec::new(),
-            last_preview: Instant::now(),
             pdf_cache: Vec::new(),
+            last_preview: Instant::now(),
         }
     }
 }
@@ -138,7 +132,6 @@ impl CommandState {
 }
 pub struct BookmarkState {
     pub bookmarks: Vec<PathBuf>,
-    pub bookmarks_state: ListState,
     pub bookmark_cursor: usize,
 }
 
@@ -146,14 +139,12 @@ impl BookmarkState {
     pub fn new(bookmarks: Vec<PathBuf>) -> Self {
         Self {
             bookmarks,
-            bookmarks_state: ListState::default(),
             bookmark_cursor: 0,
         }
     }
 }
 pub struct GrepState {
     pub grep_matches: Vec<Match>,
-    pub grep_state: ListState,
     pub grep_cursor: usize,
     pub last_grep_pattern: String,
     pub last_grep_dir: PathBuf,
@@ -163,7 +154,6 @@ impl GrepState {
     pub fn new() -> Self {
         Self {
             grep_matches: Vec::new(),
-            grep_state: ListState::default(),
             grep_cursor: 0,
             last_grep_pattern: String::new(),
             last_grep_dir: PathBuf::new(),
@@ -195,14 +185,11 @@ pub struct ActionState {
     pub actions: Vec<ActionEntry>,
     pub cursor: usize,
     pub offset: usize,
-    pub list_state: ListState,
 }
 
 impl ActionState {
     pub fn new(actions: Vec<ActionEntry>) -> Self {
-        let mut list_state = ListState::default();
-        list_state.select(Some(0));
-        Self { actions, cursor: 0, offset: 0, list_state }
+        Self { actions, cursor: 0, offset: 0 }
     }
 }
 

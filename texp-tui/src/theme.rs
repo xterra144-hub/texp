@@ -854,6 +854,23 @@ pub struct AppearanceConfig {
     pub theme: Theme,
 }
 
+impl AppearanceConfig {
+    pub fn load() -> Self {
+        let candidates = [
+            dirs::config_dir().map(|d| d.join("texp").join("config.toml")),
+            Some(std::path::PathBuf::from("texp.toml")),
+        ];
+        for path in candidates.iter().flatten() {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                if let Ok(config) = toml::from_str(&content) {
+                    return config;
+                }
+            }
+        }
+        Self::default()
+    }
+}
+
 impl Default for AppearanceConfig {
     fn default() -> Self {
         Self {

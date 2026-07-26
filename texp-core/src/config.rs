@@ -1,4 +1,3 @@
-use crate::theme::AppearanceConfig;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -55,8 +54,6 @@ pub struct Config {
     pub general: General,
     #[serde(default)]
     pub indexing: Indexing,
-    #[serde(default)]
-    pub appearance: AppearanceConfig,
 }
 
 impl Config {
@@ -77,6 +74,15 @@ impl Config {
     }
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            general: General::default(),
+            indexing: Indexing::default(),
+        }
+    }
+}
+
 impl Default for General {
     fn default() -> Self {
         Self {
@@ -89,15 +95,6 @@ impl Default for Indexing {
         Self {
             skip_dirs: default_skip_dirs(),
             skip_files: default_skip_files(),
-        }
-    }
-}
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            general: General::default(),
-            indexing: Indexing::default(),
-            appearance: AppearanceConfig::default(),
         }
     }
 }

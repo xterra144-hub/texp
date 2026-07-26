@@ -2,7 +2,16 @@
 
 A terminal-based file manager for Windows, written in Rust.
 
-Built with `ratatui` + `crossterm` for the TUI, `Diesel` + `SQLite` for file indexing, and `ignore`/`walkdir` for filesystem traversal. Russian-language interface.
+Built with `ratatui` + `crossterm` for the TUI and `ignore` for filesystem traversal. Russian-language interface.
+
+## Architecture
+
+Project split into two crates:
+
+- **`texp-core/`** — platform-independent core library (no TUI dependencies). Contains all file operations, search, indexing (ART tree), editor logic, disk usage analysis, and configuration loading.
+- **`texp-tui/`** — TUI binary crate. Depends on `texp-core` + `ratatui` + `crossterm`. Handles terminal rendering and event translation only.
+
+This separation allows alternative frontends (GUI, web) without modifying core logic.
 
 ## Features
 
@@ -32,54 +41,24 @@ Built with `ratatui` + `crossterm` for the TUI, `Diesel` + `SQLite` for file ind
 ### Requirements
 
 - **Rust toolchain** (edition 2024) — install from [rustup.rs](https://rustup.rs/)
-- **Git** (for build dependencies from git)
-- **C++ build tools** — required by `libsqlite3-sys` (bundled SQLite). On Windows install [Visual Studio Build Tools](https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022) with "Desktop development with C++" workload, or run:
-  ```sh
-  winget install Microsoft.VisualStudio.2022.BuildTools
-  ```
-  Then install the C++ workload:
-  ```sh
-  "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" modify --installChannel --productId Microsoft.VisualStudio.Product.BuildTools --add Microsoft.VisualStudio.Workload.VCTools
-  ```
 
 ### Build & Install
 
 ```sh
-# Clone or cd into the project directory
 cd texp
 
-# Build release binary
+# Option A — install directly (recommended)
+cargo install --path .
+
+# Option B — just build
 cargo build --release
 
 # The binary will be at:
-#   target/release/texp.exe
+#   target/release/texp.exe  (via workspace root)
+#   texp-tui/target/release/texp.exe  (via texp-tui crate)
 ```
 
-### Add to PATH
-
-Add the binary directory to your `PATH` so you can run `texp` from anywhere:
-
-```sh
-# Option A — copy to a directory already in PATH
-copy target\release\texp.exe C:\Windows\System32\
-
-# Option B — add the project's release folder to PATH (run once in PowerShell as Admin)
-[Environment]::SetEnvironmentVariable(
-    "Path",
-    [Environment]::GetEnvironmentVariable("Path", "User") + ";C:\full\path\to\texp\target\release",
-    "User"
-)
-
-# Option C — create a batch launcher in a PATH directory
-echo @"%USERPROFILE%\.cargo\bin\texp.exe" %* > "%USERPROFILE%\texp.cmd"
-```
-After adding to PATH, restart your terminal or run: `refreshenv` (if using Chocolatey) or open a new terminal window.
-
-### Troubleshooting
-
-- **`link.exe` not found** — install Visual Studio Build Tools (see Requirements above)
-- **`diesel` compilation errors** — ensure `libsqlite3-sys` feature `bundled` is enabled (it is by default in this project)
-- **`winapi` errors** — make sure you're on Windows (the project targets Windows only)
+After install, the binary is in `~/.cargo/bin/texp.exe`. Make sure that directory is in your `PATH`.
 
 ## Usage
 
@@ -186,19 +165,28 @@ cargo build --release
 
 ### Dependencies
 
+#### texp-core (library)
+
+| Crate | Version | Purpose |
+|---|---|---|
+| ignore | 0.4.26 | `.gitignore`-aware walking |
+| regex | 1.12.4 | Regular expressions for grep |
+| lopdf | 0.34 | PDF text extraction for preview |
+| trash | 5.2.6 | Safe delete (Recycle Bin) |
+| smallvec | 1.15 | Small vector optimization (ART tree) |
+| dirs | 6.0.0 | Platform-standard directories |
+| arboard | 3.2 | Clipboard access |
+| serde | 1 | Configuration deserialization |
+| toml | 0.8 | TOML config parsing |
+| winreg | 0.52 | Windows Registry (shell verbs) |
+
+#### texp-tui (binary)
+
 | Crate | Version | Purpose |
 |---|---|---|
 | ratatui | 0.30.1 | Terminal UI framework |
 | crossterm | 0.29.0 | Terminal backend |
-| diesel | 2.3.10 | ORM with SQLite |
-| walkdir | 2.5.0 | Recursive directory walking |
-| ignore | 0.4.26 | `.gitignore`-aware walking |
-| regex | 1.12.4 | Regular expressions for grep |
 | pulldown-cmark | 0.13.4 | Markdown → styled ratatui lines |
-| lopdf | 0.34 | PDF text extraction for preview |
-| trash | 5.2.6 | Safe delete (Recycle Bin) |
-| dirs | 6.0.0 | Platform-standard directories |
-| chrono | 0.4 | Timestamp handling |
-| arboard | 3.2 | Clipboard access |
-| serde | * | Configuration deserialization |
+| serde | 1 | Configuration deserialization |
 | toml | 0.8 | TOML config parsing |
+| dirs | 6.0.0 | Platform-standard directories |

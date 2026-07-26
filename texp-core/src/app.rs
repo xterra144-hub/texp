@@ -1,4 +1,3 @@
-use crossterm::event::{KeyCode, KeyModifiers};
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
@@ -9,19 +8,14 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use crate::config::Config;
+use crate::event::AppEvent;
 use crate::indexer::InMemoryIndex;
-use crate::markdown_parser::markdown_parser;
 use crate::state::*;
 use std::sync::Arc;
 use winreg::enums::*;
 use winreg::RegKey;
 
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
-
-pub struct KeyEvent {
-    pub code: KeyCode,
-    pub modifiers: KeyModifiers,
-}
 
 fn discover_shell_verbs() -> Vec<ActionEntry> {
     let mut seen = std::collections::HashSet::new();
@@ -218,38 +212,38 @@ impl App {
         self.status_message = msg.into();
         self.status_message_time = Some(Instant::now());
     }
-    pub fn handle_key(&mut self, key: &KeyEvent) -> Option<()> {
+
+    pub fn handle_event(&mut self, event: &AppEvent) -> Option<()> {
         use AppMode::*;
         match self.mode {
-            Normal => self.handle_normal(key),
-            Command => self.handle_command(key),
-            Search => self.handle_search(key),
-            Breadcrumbs => self.handle_breadcrumbs(key),
-            BookMarks => self.handle_bookmarks(key),
-            GrepResults => self.handle_grep_results(key),
-            DiskUsage => self.handle_disk_usage(key),
-            Viewer => self.handle_viewer(key),
-            Editor => self.handle_editor(key),
-            ConfirmDelete => self.handle_confirm_delete(key),
-            Help => self.handle_help(key),
-            FileInfo => self.handle_file_info(key),
-            Action => self.handle_action(key),
+            Normal => self.handle_normal(event),
+            Command => self.handle_command(event),
+            Search => self.handle_search(event),
+            Breadcrumbs => self.handle_breadcrumbs(event),
+            BookMarks => self.handle_bookmarks(event),
+            GrepResults => self.handle_grep_results(event),
+            DiskUsage => self.handle_disk_usage(event),
+            Viewer => self.handle_viewer(event),
+            Editor => self.handle_editor(event),
+            ConfirmDelete => self.handle_confirm_delete(event),
+            Help => self.handle_help(event),
+            FileInfo => self.handle_file_info(event),
+            Action => self.handle_action(event),
         }
     }
 
-    #[must_use]
-    fn handle_normal(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Esc => {
+    fn handle_normal(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape => {
                 if !self.nav.filter_input.is_empty() {
                     self.nav.filter_input.clear();
                     self.apply_filter();
                 }
             }
-            KeyCode::Delete => {
+            AppEvent::Delete => {
                 self.mode = AppMode::ConfirmDelete
             }
-            KeyCode::Char('q') => {
+            AppEvent::Char('q') => {
                 if self.editor.editor_modified {
                     self.save_progress = Some((0, 1));
                     let _ = self.editor_save();
@@ -266,7 +260,7 @@ impl App {
                 }
                 return Some(());
             }
-            KeyCode::Up => {
+            AppEvent::Up => {
                 if self.nav.cursor_index == 0 && !self.nav.path_segments.is_empty() {
                     self.mode = AppMode::Breadcrumbs;
                     self.nav.path_cursor = self.nav.path_segments.len() - 1;
@@ -274,9 +268,9 @@ impl App {
                     self.move_cursor_up();
                 }
             }
-            KeyCode::Down => self.move_cursor_down(),
-            KeyCode::Char(' ') => self.toggle_select(),
-            KeyCode::Enter => {
+            AppEvent::Down => self.move_cursor_down(),
+            AppEvent::Char(' ') => self.toggle_select(),
+            AppEvent::Enter => {
                 if !self.nav.files.is_empty() {
                     let target = self.nav.files[self.nav.cursor_index].clone();
                     let is_dir = target.is_dir()
@@ -295,7 +289,7 @@ impl App {
                     }
                 }
             }
-            KeyCode::Backspace => {
+            AppEvent::Backspace => {
                 if !self.nav.filter_input.is_empty() {
                     self.nav.filter_input.pop();
                     self.apply_filter();
@@ -312,20 +306,19 @@ impl App {
                     }
                 }
             }
-            KeyCode::Char(':') => {
+            AppEvent::Char(':') => {
                 self.mode = AppMode::Command;
                 self.cmd.command_input.clear();
                 self.cmd.command_suggestion.clear();
             }
-            KeyCode::Char('b') => self.toggle_bookmarks(),
-            KeyCode::Char('s') => self.cycle_sort(),
-            KeyCode::Char('S') => self.toggle_sort_order(),
-            KeyCode::Char('B') => {
+            AppEvent::Char('b') => self.toggle_bookmarks(),
+            AppEvent::Char('s') => self.cycle_sort(),
+            AppEvent::Char('S') => self.toggle_sort_order(),
+            AppEvent::Char('B') => {
                 self.mode = AppMode::BookMarks;
                 self.bookmarks.bookmark_cursor = 0;
-                self.bookmarks.bookmarks_state.select(Some(0));
             }
-            KeyCode::Char('.') => {
+            AppEvent::Char('.') => {
                 self.nav.show_hidden = !self.nav.show_hidden;
                 self.refresh_files();
                 self.set_status(if self.nav.show_hidden {
@@ -334,24 +327,24 @@ impl App {
                     "Hidden files: hidden"
                 });
             }
-            KeyCode::Char('p') => {
+            AppEvent::Char('p') => {
                 self.preview.preview_visible = !self.preview.preview_visible;
             }
-            KeyCode::Char('v') => {
+            AppEvent::Char('v') => {
                 self.open_viewer();
             }
-            KeyCode::F(1) | KeyCode::Char('?') => {
+            AppEvent::F(1) | AppEvent::Char('?') => {
                 self.help_scroll = 0;
                 self.mode = AppMode::Help;
             }
-            KeyCode::Left if key.modifiers == KeyModifiers::ALT => self.history_back(),
-            KeyCode::Right if key.modifiers == KeyModifiers::ALT => self.history_forward(),
-            KeyCode::Char('y') if key.modifiers == KeyModifiers::CONTROL => {
+            AppEvent::AltLeft => self.history_back(),
+            AppEvent::AltRight => self.history_forward(),
+            AppEvent::Ctrl('y') => {
                 if !self.nav.files.is_empty() {
                     self.mode = AppMode::FileInfo;
                 }
             }
-            KeyCode::Char('r') if key.modifiers == KeyModifiers::CONTROL => {
+            AppEvent::Ctrl('r') => {
                 if !self.grep.last_grep_pattern.is_empty() {
                     let matches = crate::grep::Searcher::search_with_gitignore(
                         &self.grep.last_grep_dir,
@@ -361,22 +354,21 @@ impl App {
                     );
                     self.grep.grep_matches = matches;
                     self.grep.grep_cursor = 0;
-                    self.grep.grep_state.select(Some(0));
                     self.mode = AppMode::GrepResults;
                 }
             }
-            KeyCode::Char('a') if key.modifiers == KeyModifiers::CONTROL => {
+            AppEvent::Ctrl('a') => {
                 self.mode = AppMode::Action;
                 self.action.cursor = 0;
             }
-            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            AppEvent::Char(c) => {
                 if let Some((done, total)) = self.save_progress {
                     if done == total {
                         self.save_progress = None;
                         return Some(());
                     }
                 }
-                self.nav.filter_input.push(c);
+                self.nav.filter_input.push(*c);
                 self.apply_filter();
             }
             _ => {
@@ -391,14 +383,14 @@ impl App {
         None
     }
 
-    fn handle_command(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Esc => {
+    fn handle_command(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape => {
                 self.mode = AppMode::Normal;
                 self.cmd.command_input.clear();
                 self.cmd.command_suggestion.clear();
             }
-            KeyCode::Enter => {
+            AppEvent::Enter => {
                 let input = self.cmd.command_input.trim().to_string();
                 if !input.is_empty()
                     && (self.cmd.command_history.is_empty()
@@ -497,7 +489,6 @@ impl App {
                                 );
                                 self.grep.grep_matches = matches;
                                 self.grep.grep_cursor = 0;
-                                self.grep.grep_state.select(Some(0));
                                 self.mode = AppMode::GrepResults;
                             } else if !self.grep.last_grep_pattern.is_empty() {
                                 let matches = crate::grep::Searcher::search_with_gitignore(
@@ -508,7 +499,6 @@ impl App {
                                 );
                                 self.grep.grep_matches = matches;
                                 self.grep.grep_cursor = 0;
-                                self.grep.grep_state.select(Some(0));
                                 self.mode = AppMode::GrepResults;
                             } else {
                                 self.mode = AppMode::Normal;
@@ -525,15 +515,15 @@ impl App {
                     self.cmd.command_suggestion.clear();
                 }
             }
-            KeyCode::Char(c) => {
-                self.cmd.command_input.push(c);
+            AppEvent::Char(c) => {
+                self.cmd.command_input.push(*c);
                 self.update_suggestion();
             }
-            KeyCode::Backspace => {
+            AppEvent::Backspace => {
                 self.cmd.command_input.pop();
                 self.update_suggestion();
             }
-            KeyCode::Tab | KeyCode::Down => {
+            AppEvent::Tab | AppEvent::Down => {
                 if !self.cmd.command_suggestion.is_empty() {
                     self.cmd.suggestion_index =
                         (self.cmd.suggestion_index + 1) % self.cmd.command_suggestion.len();
@@ -549,7 +539,7 @@ impl App {
                     }
                 }
             }
-            KeyCode::Up => {
+            AppEvent::Up => {
                 if !self.cmd.command_suggestion.is_empty() {
                     self.cmd.suggestion_index = if self.cmd.suggestion_index == 0 {
                         self.cmd.command_suggestion.len() - 1
@@ -564,13 +554,13 @@ impl App {
                     self.update_suggestion();
                 }
             }
-            KeyCode::PageDown => {
+            AppEvent::PageDown => {
                 if !self.cmd.command_suggestion.is_empty() {
                     self.cmd.suggestion_index = (self.cmd.suggestion_index + 8)
                         .min(self.cmd.command_suggestion.len().saturating_sub(1));
                 }
             }
-            KeyCode::PageUp => {
+            AppEvent::PageUp => {
                 if !self.cmd.command_suggestion.is_empty() {
                     self.cmd.suggestion_index = self.cmd.suggestion_index.saturating_sub(8);
                 }
@@ -580,15 +570,15 @@ impl App {
         None
     }
 
-    fn handle_search(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Esc => {
+    fn handle_search(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape => {
                 self.mode = AppMode::Normal;
                 self.refresh_files();
             }
-            KeyCode::Up => self.move_cursor_up(),
-            KeyCode::Down => self.move_cursor_down(),
-            KeyCode::Enter => {
+            AppEvent::Up => self.move_cursor_up(),
+            AppEvent::Down => self.move_cursor_down(),
+            AppEvent::Enter => {
                 if !self.nav.files.is_empty() {
                     let target = self.nav.files[self.nav.cursor_index].clone();
                     if target.is_dir() {
@@ -610,30 +600,30 @@ impl App {
         None
     }
 
-    fn handle_breadcrumbs(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Down => {
+    fn handle_breadcrumbs(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Down => {
                 self.mode = AppMode::Normal;
                 self.nav.cursor_index = 0;
             }
-            KeyCode::Left => {
+            AppEvent::Left => {
                 if self.nav.path_cursor > 0 {
                     self.nav.path_cursor -= 1;
                 }
             }
-            KeyCode::Right => {
+            AppEvent::Right => {
                 if self.nav.path_cursor < self.nav.path_segments.len() - 1 {
                     self.nav.path_cursor += 1;
                 }
             }
-            KeyCode::Enter => {
+            AppEvent::Enter => {
                 let target_dir = self.nav.path_segments[self.nav.path_cursor].clone();
                 self.push_history();
                 self.nav.current_dir = target_dir;
                 self.nav.cursor_index = 0;
                 self.refresh_files();
             }
-            KeyCode::Esc => {
+            AppEvent::Escape => {
                 self.mode = AppMode::Normal;
             }
             _ => {}
@@ -641,24 +631,21 @@ impl App {
         None
     }
 
-    fn handle_bookmarks(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('B') => {
+    fn handle_bookmarks(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape | AppEvent::Char('B') => {
                 self.mode = AppMode::Normal;
             }
-            KeyCode::Up => {
+            AppEvent::Up => {
                 if !self.bookmarks.bookmarks.is_empty() {
                     self.bookmarks.bookmark_cursor = if self.bookmarks.bookmark_cursor > 0 {
                         self.bookmarks.bookmark_cursor - 1
                     } else {
                         self.bookmarks.bookmarks.len() - 1
                     };
-                    self.bookmarks
-                        .bookmarks_state
-                        .select(Some(self.bookmarks.bookmark_cursor));
                 }
             }
-            KeyCode::Down => {
+            AppEvent::Down => {
                 if !self.bookmarks.bookmarks.is_empty() {
                     self.bookmarks.bookmark_cursor =
                         if self.bookmarks.bookmark_cursor < self.bookmarks.bookmarks.len() - 1 {
@@ -666,24 +653,20 @@ impl App {
                         } else {
                             0
                         };
-                    self.bookmarks
-                        .bookmarks_state
-                        .select(Some(self.bookmarks.bookmark_cursor));
                 }
             }
-            KeyCode::Enter => {
+            AppEvent::Enter => {
                 if !self.bookmarks.bookmarks.is_empty() {
                     let target_dir =
                         self.bookmarks.bookmarks[self.bookmarks.bookmark_cursor].clone();
                     self.push_history();
                     self.nav.current_dir = target_dir;
                     self.nav.cursor_index = 0;
-                    self.nav.list_state.select(Some(0));
                     self.refresh_files();
                     self.mode = AppMode::Normal;
                 }
             }
-            KeyCode::Char('d') | KeyCode::Delete => {
+            AppEvent::Char('d') | AppEvent::Delete => {
                 if !self.bookmarks.bookmarks.is_empty()
                     && self.bookmarks.bookmark_cursor < self.bookmarks.bookmarks.len()
                 {
@@ -695,9 +678,6 @@ impl App {
                     } else if self.bookmarks.bookmark_cursor >= self.bookmarks.bookmarks.len() {
                         self.bookmarks.bookmark_cursor = self.bookmarks.bookmarks.len() - 1;
                     }
-                    self.bookmarks
-                        .bookmarks_state
-                        .select(Some(self.bookmarks.bookmark_cursor));
                     self.save_bookmarks();
                 }
             }
@@ -706,22 +686,21 @@ impl App {
         None
     }
 
-    fn handle_grep_results(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Esc => {
+    fn handle_grep_results(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape => {
                 self.mode = AppMode::Normal;
             }
-            KeyCode::Up => {
+            AppEvent::Up => {
                 if !self.grep.grep_matches.is_empty() {
                     self.grep.grep_cursor = if self.grep.grep_cursor > 0 {
                         self.grep.grep_cursor - 1
                     } else {
                         self.grep.grep_matches.len() - 1
                     };
-                    self.grep.grep_state.select(Some(self.grep.grep_cursor));
                 }
             }
-            KeyCode::Down => {
+            AppEvent::Down => {
                 if !self.grep.grep_matches.is_empty() {
                     self.grep.grep_cursor =
                         if self.grep.grep_cursor < self.grep.grep_matches.len() - 1 {
@@ -729,10 +708,9 @@ impl App {
                         } else {
                             0
                         };
-                    self.grep.grep_state.select(Some(self.grep.grep_cursor));
                 }
             }
-            KeyCode::Enter => {
+            AppEvent::Enter => {
                 if !self.grep.grep_matches.is_empty() {
                     let m = &self.grep.grep_matches[self.grep.grep_cursor];
                     let file = m.file.clone();
@@ -743,24 +721,16 @@ impl App {
                         self.refresh_files();
                         if let Some(index) = self.nav.files.iter().position(|x| x == &file) {
                             self.nav.cursor_index = index;
-                            self.nav.list_state.select(Some(index));
                         }
                     }
                     if let Ok(text) = fs::read_to_string(&file) {
                         self.preview.preview_content = text;
                         self.preview.preview_scroll = line.saturating_sub(16);
-                        self.preview.preview_is_md = false;
-                        self.preview.preview_lines.clear();
-                        let is_md = file
+                        self.preview.preview_is_md = file
                             .extension()
                             .and_then(|e| e.to_str())
                             .map(|e| e.eq_ignore_ascii_case("md"))
                             .unwrap_or(false);
-                        if is_md {
-                            self.preview.preview_is_md = true;
-                                self.preview.preview_lines =
-                                    markdown_parser(&self.preview.preview_content, &self.config.appearance.theme.markdown);
-                        }
                         self.mode = AppMode::Viewer;
                     }
                 }
@@ -770,24 +740,24 @@ impl App {
         None
     }
 
-    fn handle_disk_usage(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Esc => {
+    fn handle_disk_usage(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape => {
                 self.mode = AppMode::Normal;
             }
-            KeyCode::Up => {
+            AppEvent::Up => {
                 if !self.du.disk_usage_items.is_empty() && self.du.disk_usage_cursor > 0 {
                     self.du.disk_usage_cursor -= 1;
                 }
             }
-            KeyCode::Down => {
+            AppEvent::Down => {
                 if !self.du.disk_usage_items.is_empty()
                     && self.du.disk_usage_cursor < self.du.disk_usage_items.len() - 1
                 {
                     self.du.disk_usage_cursor += 1;
                 }
             }
-            KeyCode::Enter => {
+            AppEvent::Enter => {
                 if !self.du.disk_usage_items.is_empty() {
                     let target = self.du.disk_usage_items[self.du.disk_usage_cursor].clone();
                     if target.is_dir {
@@ -802,32 +772,32 @@ impl App {
         None
     }
 
-    fn handle_viewer(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
+    fn handle_viewer(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Up | AppEvent::Char('k') => {
                 if self.preview.preview_scroll > 0 {
                     self.preview.preview_scroll -= 1;
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            AppEvent::Down | AppEvent::Char('j') => {
                 self.preview.preview_scroll += 1;
             }
-            KeyCode::PageUp => {
+            AppEvent::PageUp => {
                 self.preview.preview_scroll = self.preview.preview_scroll.saturating_sub(20);
             }
-            KeyCode::PageDown => {
+            AppEvent::PageDown => {
                 self.preview.preview_scroll += 20;
             }
-            KeyCode::Home => {
+            AppEvent::Home => {
                 self.preview.preview_scroll = 0;
             }
-            KeyCode::End => {
+            AppEvent::End => {
                 self.preview.preview_scroll = usize::MAX;
             }
-            KeyCode::Char('e') | KeyCode::Char('i') => {
+            AppEvent::Char('e') | AppEvent::Char('i') => {
                 self.open_editor();
             }
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('v') => {
+            AppEvent::Escape | AppEvent::Char('q') | AppEvent::Char('v') => {
                 self.mode = AppMode::Normal;
                 self.refresh_files();
             }
@@ -836,78 +806,72 @@ impl App {
         None
     }
 
-    fn handle_editor(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Esc => {
+    fn handle_editor(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape => {
                 if self.editor.editor_modified {
                     let _ = self.editor_save();
                 }
                 self.mode = AppMode::Normal;
                 self.refresh_files();
             }
-            KeyCode::Up => self.editor_move_up(),
-            KeyCode::Down => self.editor_move_down(),
-            KeyCode::Left
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && key.modifiers.contains(KeyModifiers::SHIFT) =>
-            {
+            AppEvent::Up => self.editor_move_up(),
+            AppEvent::Down => self.editor_move_down(),
+            AppEvent::CtrlShiftLeft => {
                 self.editor_select_word_left()
             }
-            KeyCode::Right
-                if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && key.modifiers.contains(KeyModifiers::SHIFT) =>
-            {
+            AppEvent::CtrlShiftRight => {
                 self.editor_select_word_right()
             }
-            KeyCode::Left if key.modifiers == KeyModifiers::CONTROL => self.editor_move_word_left(),
-            KeyCode::Right if key.modifiers == KeyModifiers::CONTROL => {
+            AppEvent::CtrlLeft => self.editor_move_word_left(),
+            AppEvent::CtrlRight => {
                 self.editor_move_word_right()
             }
-            KeyCode::Left => self.editor_move_left(),
-            KeyCode::Right => self.editor_move_right(),
-            KeyCode::Backspace => self.editor_backspace(),
-            KeyCode::Delete => self.editor_delete(),
-            KeyCode::Enter => self.editor_insert_newline(),
-            KeyCode::Char(c) if key.modifiers == KeyModifiers::CONTROL && c == 's' => {
+            AppEvent::Left => self.editor_move_left(),
+            AppEvent::Right => self.editor_move_right(),
+            AppEvent::Backspace => self.editor_backspace(),
+            AppEvent::Delete => self.editor_delete(),
+            AppEvent::Enter => self.editor_insert_newline(),
+            AppEvent::Ctrl('s') => {
                 if let Err(e) = self.editor_save() {
                     eprintln!("Save error: {}", e);
                 }
             }
-            KeyCode::Char(c) if key.modifiers == KeyModifiers::CONTROL && c == 'x' => {
+            AppEvent::Ctrl('x') => {
                 self.editor_cut();
             }
-            KeyCode::Char(c) if key.modifiers == KeyModifiers::CONTROL && c == 'c' => {
+            AppEvent::Ctrl('c') => {
                 self.editor_copy();
             }
-            KeyCode::Tab => self.editor_insert_char('\t'),
-            KeyCode::Char(c) => self.editor_insert_char(c),
+            AppEvent::Tab => self.editor_insert_char('\t'),
+            AppEvent::Char(c) => self.editor_insert_char(*c),
             _ => {}
         }
         None
     }
 
-    fn handle_help(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::F(1) => {
+    fn handle_help(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape | AppEvent::Char('q') | AppEvent::F(1) => {
                 self.help_scroll = 0;
                 self.mode = AppMode::Normal;
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            AppEvent::Up | AppEvent::Char('k') => {
                 self.help_scroll = self.help_scroll.saturating_sub(1);
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            AppEvent::Down | AppEvent::Char('j') => {
                 self.help_scroll = self.help_scroll.saturating_add(1);
             }
-            KeyCode::PageUp => {
+            AppEvent::PageUp => {
                 self.help_scroll = self.help_scroll.saturating_sub(20);
             }
-            KeyCode::PageDown => {
+            AppEvent::PageDown => {
                 self.help_scroll = self.help_scroll.saturating_add(20);
             }
-            KeyCode::Home => {
+            AppEvent::Home => {
                 self.help_scroll = 0;
             }
-            KeyCode::End => {
+            AppEvent::End => {
                 self.help_scroll = usize::MAX;
             }
             _ => {}
@@ -915,12 +879,12 @@ impl App {
         None
     }
 
-    fn handle_file_info(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('y') => {
+    fn handle_file_info(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape | AppEvent::Char('q') | AppEvent::Char('y') => {
                 self.mode = AppMode::Normal;
             }
-            KeyCode::Char('c') if key.modifiers == KeyModifiers::CONTROL => {
+            AppEvent::Ctrl('c') => {
                 if let Some(path) = self.nav.files.get(self.nav.cursor_index) {
                     if let Ok(mut clip) = arboard::Clipboard::new() {
                         let _ = clip.set_text(path.to_string_lossy().to_string());
@@ -934,27 +898,25 @@ impl App {
         None
     }
 
-    fn handle_action(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => {
+    fn handle_action(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape | AppEvent::Char('q') => {
                 self.mode = AppMode::Normal;
             }
-            KeyCode::Up => {
+            AppEvent::Up => {
                 if self.action.cursor > 0 {
                     self.action.cursor -= 1;
                     if self.action.cursor < self.action.offset {
                         self.action.offset = self.action.cursor;
                     }
                 }
-                self.action.list_state.select(Some(self.action.cursor));
             }
-            KeyCode::Down => {
+            AppEvent::Down => {
                 if self.action.cursor + 1 < self.action.actions.len() {
                     self.action.cursor += 1;
                 }
-                self.action.list_state.select(Some(self.action.cursor));
             }
-            KeyCode::Enter => {
+            AppEvent::Enter => {
                 let cwd = &self.nav.current_dir;
                 let Some(entry) = self.action.actions.get(self.action.cursor) else {
                     return None;
@@ -1010,9 +972,9 @@ impl App {
         None
     }
 
-    fn handle_confirm_delete(&mut self, key: &KeyEvent) -> Option<()> {
-        match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+    fn handle_confirm_delete(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Char('y') | AppEvent::Char('Y') | AppEvent::Enter => {
                 let to_delete: Vec<_> = if !self.nav.selected_files.is_empty() {
                     self.nav.selected_files.iter().cloned().collect()
                 } else if !self.nav.files.is_empty() {
@@ -1025,13 +987,14 @@ impl App {
                 self.refresh_files();
                 self.mode = AppMode::Normal;
             }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            AppEvent::Char('n') | AppEvent::Char('N') | AppEvent::Escape => {
                 self.mode = AppMode::Normal;
             }
             _ => {}
         }
         None
     }
+
     pub fn save_bookmarks(&self) {
         if let Ok(mut file) = File::create(&self.config.general.bookmarks_file) {
             for bookmark in &self.bookmarks.bookmarks {
@@ -1155,7 +1118,6 @@ impl App {
         if self.nav.cursor_index >= self.nav.files.len() && !self.nav.files.is_empty() {
             self.nav.cursor_index = self.nav.files.len() - 1;
         }
-        self.nav.list_state.select(Some(self.nav.cursor_index));
         self.nav.full_files = self.nav.files.clone();
     }
 
@@ -1225,7 +1187,6 @@ impl App {
             self.nav.sort_mode,
             self.nav.sort_reverse,
         );
-        self.nav.list_state.select(Some(self.nav.cursor_index));
     }
 
     pub fn apply_filter(&mut self) {
@@ -1247,7 +1208,6 @@ impl App {
                 .collect();
         }
         self.nav.cursor_index = 0;
-        self.nav.list_state.select(Some(self.nav.cursor_index));
         self.update_preview();
     }
 
@@ -1268,7 +1228,6 @@ impl App {
         } else {
             self.nav.files.len() - 1
         };
-        self.nav.list_state.select(Some(self.nav.cursor_index));
         self.update_preview();
     }
 
@@ -1281,7 +1240,6 @@ impl App {
         } else {
             0
         };
-        self.nav.list_state.select(Some(self.nav.cursor_index));
         self.update_preview();
     }
 
@@ -1296,8 +1254,6 @@ impl App {
         }
     }
 
-    // ─── Preview ────────────────────────────────────────────────
-
     pub fn update_preview(&mut self) {
         if self.preview.last_preview.elapsed() < Duration::from_millis(80) {
             return;
@@ -1305,7 +1261,6 @@ impl App {
         self.preview.last_preview = Instant::now();
         self.preview.preview_content.clear();
         self.preview.preview_is_md = false;
-        self.preview.preview_lines.clear();
 
         if self.nav.files.is_empty() {
             return;
@@ -1331,7 +1286,7 @@ impl App {
                     c
                 });
             self.preview.preview_content =
-                format!("📁Folder\n\n {}\n\n {} items", path.display(), count);
+                format!("Folder\n\n {}\n\n {} items", path.display(), count);
             return;
         }
 
@@ -1339,7 +1294,7 @@ impl App {
         if Self::is_image(path) {
             let len = self.entry_size(path);
             self.preview.preview_content = format!(
-                "📷 Image | {}\n\n[Enter] — open in mspaint",
+                "Image | {}\n\n[Enter] — open in mspaint",
                 format_size(len)
             );
             return;
@@ -1356,7 +1311,7 @@ impl App {
             self.preview.preview_content = match lopdf::Document::load(path) {
                 Ok(doc) => {
                     let total_pages = doc.get_pages().len();
-                    let mut content = format!("📄 PDF | {} pages | {}\n\n", total_pages, size_str);
+                    let mut content = format!("PDF | {} pages | {}\n\n", total_pages, size_str);
                     let page_nums: Vec<u32> = (1..=5.min(total_pages as u32)).collect();
                     match doc.extract_text(&page_nums) {
                         Ok(text) if !text.trim().is_empty() => {
@@ -1369,14 +1324,13 @@ impl App {
                         }
                         _ => content.push_str("[text not extracted — possibly scanned PDF]"),
                     }
-                    // LRU cache
                     if self.preview.pdf_cache.len() >= MAX_PDF_CACHE {
                         self.preview.pdf_cache.remove(0);
                     }
                     self.preview.pdf_cache.push((path.clone(), content.clone()));
                     content
                 }
-                Err(_) => format!("📄 PDF | {}\n\n[error loading file]", size_str),
+                Err(_) => format!("PDF | {}\n\n[error loading file]", size_str),
             };
             return;
         }
@@ -1390,7 +1344,6 @@ impl App {
         if is_md {
             if let Ok(text) = fs::read_to_string(path) {
                 self.preview.preview_is_md = true;
-                self.preview.preview_lines = markdown_parser(&text, &self.config.appearance.theme.markdown);
                 self.preview.preview_content = text;
             }
             return;
@@ -1425,19 +1378,13 @@ impl App {
                 self.preview.preview_scroll = 0;
                 self.mode = AppMode::Viewer;
             }
-            let is_md = path
+            self.preview.preview_is_md = path
                 .extension()
                 .and_then(|e| e.to_str())
                 .map(|e| e.eq_ignore_ascii_case("md"))
                 .unwrap_or(false);
-            if is_md {
-                self.preview.preview_is_md = true;
-                self.preview.preview_lines = markdown_parser(&self.preview.preview_content, &self.config.appearance.theme.markdown);
-            }
         }
     }
-
-    // ─── Editor ──────────────────────────────────────────────────
 
     pub fn open_editor(&mut self) {
         if self.nav.files.is_empty() {
@@ -1743,8 +1690,6 @@ impl App {
         self.editor.editor_buffer[start..end].chars().count()
     }
 
-    // ─── Suggestions ─────────────────────────────────────────────
-
     pub fn update_suggestion(&mut self) {
         self.cmd.suggestion_index = 0;
         self.cmd.suggestion_scroll = 0;
@@ -1811,12 +1756,12 @@ impl App {
             }
         }
     }
+
     pub fn calculate_disk_usage(&mut self) {
         self.du.disk_usage_items.clear();
         self.du.disk_usage_total = 0;
         self.du.disk_usage_cursor = 0;
 
-        // Single-pass: accumulate sizes by parent directory
         let mut dir_sizes: HashMap<PathBuf, u64> = HashMap::new();
         let mut file_sizes: HashMap<PathBuf, u64> = HashMap::new();
         let root = self.nav.current_dir.clone();
@@ -1870,8 +1815,6 @@ impl App {
 
         self.du.disk_usage_items.sort_by(|a, b| b.size.cmp(&a.size));
     }
-
-    // ─── Command execution ───────────────────────────────────────
 
     pub fn execute_command(&mut self) {
         let input = self.cmd.command_input.clone();

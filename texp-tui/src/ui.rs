@@ -1,16 +1,17 @@
-use crate::app::{App, AppMode, editor_line_starts};
-use crate::state::*;
-use crate::theme::Icons;
+use crate::markdown_parser::markdown_parser;
+use crate::theme::{AppearanceConfig, Icons};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
 use std::fs;
 use std::time::Duration;
+use texp_core::app::{App, AppMode, editor_line_starts};
+use texp_core::state::*;
 
-pub fn draw(f: &mut Frame, app: &mut App) {
-    let theme = &app.config.appearance.theme;
-    let icons = &app.config.appearance.icons;
+pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig) {
+    let theme = &appearance.theme;
+    let icons = &appearance.icons;
     let snippet_height = if app.mode == AppMode::Command && !app.cmd.command_suggestion.is_empty() {
         let max_height = f.area().height.saturating_sub(6).clamp(3, 25);
         std::cmp::min(app.cmd.command_suggestion.len() as u16 + 2, max_height)
@@ -27,7 +28,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         ])
         .split(f.area());
 
-    // ── Path bar ────────────────────────────────────────────────
     let mut path_spans = Vec::new();
     path_spans.push(Span::styled(
         " PATH: ",
@@ -52,7 +52,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     f.render_widget(Paragraph::new(Line::from(path_spans)), chunks[0]);
 
-    // ── File list ───────────────────────────────────────────────
     let viewport = chunks[2].height.saturating_sub(2) as usize;
     let total = app.nav.files.len();
     let half = viewport / 2;
@@ -109,9 +108,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         }
         items.push(ListItem::new(display_text).style(style));
     }
-    app.nav
-        .list_state
-        .select(Some(app.nav.cursor_index.saturating_sub(start)));
+    let mut file_list_state = ratatui::widgets::ListState::default();
+    file_list_state.select(Some(app.nav.cursor_index.saturating_sub(start)));
     let list_title = if is_search { " Search Results " } else { " Files " };
     let mut list = List::new(items).block(Block::default().borders(Borders::ALL).title(list_title));
     if app.mode == AppMode::Normal || app.mode == AppMode::Search {
@@ -123,11 +121,12 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
             .split(chunks[2]);
-        f.render_stateful_widget(list, main_layout[0], &mut app.nav.list_state);
+        f.render_stateful_widget(list, main_layout[0], &mut file_list_state);
         let preview_style = Style::default().fg(theme.preview.content_fg.0).bg(theme.preview.content_bg.0);
         let preview: Paragraph =
-            if app.preview.preview_is_md && !app.preview.preview_lines.is_empty() {
-                Paragraph::new(app.preview.preview_lines.clone()).block(
+            if app.preview.preview_is_md && !app.preview.preview_content.is_empty() {
+                let md_lines = markdown_parser(&app.preview.preview_content, &theme.markdown);
+                Paragraph::new(md_lines).block(
                     Block::default()
                         .borders(Borders::ALL)
                         .border_style(Style::default().fg(theme.preview.border_fg.0))
@@ -145,10 +144,9 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             };
         f.render_widget(preview, main_layout[1]);
     } else {
-        f.render_stateful_widget(list, chunks[2], &mut app.nav.list_state);
+        f.render_stateful_widget(list, chunks[2], &mut file_list_state);
     }
 
-    // ── Suggestions ─────────────────────────────────────────────
     if snippet_height > 0 {
         let max_visible = snippet_height.saturating_sub(2) as usize;
         let total = app.cmd.command_suggestion.len();
@@ -202,7 +200,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         );
         f.render_widget(suggestion_block, chunks[1]);
     }
-    // ── Bookmarks ───────────────────────────────────────────────
     if app.mode == AppMode::BookMarks {
         let popup_layout = Layout::default()
             .direction(Direction::Vertical)
@@ -261,6 +258,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                     .fg(theme.bookmarks.title_fg.0)
                     .add_modifier(theme.bookmarks.title_modifier.0),
             ));
+        let mut bm_state = ratatui::widgets::ListState::default();
+        bm_state.select(Some(app.bookmarks.bookmark_cursor));
         let bookmark_list = List::new(bookmark_items)
             .block(bookmark_block)
             .highlight_style(
@@ -269,7 +268,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                     .fg(theme.bookmarks.highlight_fg.0)
                     .add_modifier(theme.bookmarks.highlight_modifier.0),
             );
-        f.render_stateful_widget(bookmark_list, area, &mut app.bookmarks.bookmarks_state);
+        f.render_stateful_widget(bookmark_list, area, &mut bm_state);
     }
     if app.mode == AppMode::GrepResults {
         let popup_layout = Layout::default()
@@ -296,7 +295,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         } else {
             for (idx, m) in app.grep.grep_matches.iter().enumerate() {
                 let prefix = if idx == app.grep.grep_cursor {
-                    "👉 "
+                    " 👉 "
                 } else {
                     "   "
                 };
@@ -329,13 +328,15 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                     .fg(theme.grep_results.title_fg.0)
                     .add_modifier(theme.grep_results.title_modifier.0),
             ));
+        let mut grep_state = ratatui::widgets::ListState::default();
+        grep_state.select(Some(app.grep.grep_cursor));
         let grep_list = List::new(grep_items).block(grep_block).highlight_style(
             Style::default()
                 .bg(theme.grep_results.highlight_bg.0)
                 .fg(theme.grep_results.highlight_fg.0)
                 .add_modifier(theme.grep_results.highlight_modifier.0),
         );
-        f.render_stateful_widget(grep_list, area, &mut app.grep.grep_state);
+        f.render_stateful_widget(grep_list, area, &mut grep_state);
     }
     if app.mode == AppMode::Viewer {
         let area = chunks[2];
@@ -353,10 +354,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             app.preview.preview_scroll = total_lines - visible_height;
         }
         let num_style = Style::default().fg(theme.viewer.line_numbers_fg.0);
-        let text: Vec<Line> = if app.preview.preview_is_md && !app.preview.preview_lines.is_empty()
+        let text: Vec<Line> = if app.preview.preview_is_md && !app.preview.preview_content.is_empty()
         {
-            app.preview
-                .preview_lines
+            let md_lines = markdown_parser(&app.preview.preview_content, &theme.markdown);
+            md_lines
                 .iter()
                 .enumerate()
                 .skip(app.preview.preview_scroll)
@@ -706,6 +707,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                     .fg(theme.action_menu.title_fg.0)
                     .add_modifier(theme.action_menu.title_modifier.0),
             ));
+        let mut action_state = ratatui::widgets::ListState::default();
+        action_state.select(Some(app.action.cursor.saturating_sub(app.action.offset)));
         let action_list = List::new(visible)
             .block(action_block)
             .highlight_symbol(" > ")
@@ -714,7 +717,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 .bg(theme.action_menu.highlight_bg.0)
                 .fg(theme.action_menu.highlight_fg.0),
         );
-        f.render_stateful_widget(action_list, area, &mut app.action.list_state);
+        f.render_stateful_widget(action_list, area, &mut action_state);
     }
     if app.mode == AppMode::FileInfo {
         let popup = Layout::default()
@@ -920,7 +923,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
                 } else {
                     if app.cmd.command_input.starts_with(":grep ") {
                         let query = app.cmd.command_input.trim_start_matches(":grep ").trim();
-                        let hint = crate::grep::Searcher::checker_pattern(query);
+                        let hint = texp_core::grep::Searcher::checker_pattern(query);
                         let hint_rect = Rect::new(chunks[3].x, chunks[3].y - 2, chunks[3].width, 1);
                         let hint_style = if hint.is_valid {
                             Style::default().fg(theme.grep_hint.valid_fg.0)
@@ -951,21 +954,19 @@ pub fn draw(f: &mut Frame, app: &mut App) {
             )
             .style(Style::default().fg(sb.bookmarks_fg.0).bg(sb.bookmarks_bg.0)),
             AppMode::GrepResults => {
-                if let Some(selected_idx) = app.grep.grep_state.selected() {
-                    let popup_vertical = Layout::default()
-                        .direction(Direction::Vertical)
-                        .constraints([
-                            Constraint::Percentage(10),
-                            Constraint::Percentage(80),
-                            Constraint::Percentage(10),
-                        ])
-                        .split(f.area());
-                    let popup_area = popup_vertical[1];
-                    let cursor_y =
-                        popup_area.y + 1 + (selected_idx as u16).min(popup_area.height - 3);
-                    let cursor_x = popup_area.x + 4;
-                    f.set_cursor_position(Position::new(cursor_x, cursor_y));
-                }
+                let popup_vertical = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Percentage(10),
+                        Constraint::Percentage(80),
+                        Constraint::Percentage(10),
+                    ])
+                    .split(f.area());
+                let popup_area = popup_vertical[1];
+                let cursor_y =
+                    popup_area.y + 1 + (app.grep.grep_cursor as u16).min(popup_area.height - 3);
+                let cursor_x = popup_area.x + 4;
+                f.set_cursor_position(Position::new(cursor_x, cursor_y));
                 Paragraph::new(" [Up/Down] Scroll matches | [Enter] Open file | [Esc] Close")
                     .style(Style::default().fg(sb.grep_results_fg.0).bg(sb.grep_results_bg.0))
             }

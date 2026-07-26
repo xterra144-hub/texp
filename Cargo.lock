@@ -1955,19 +1955,36 @@ dependencies = [
 name = "texp"
 version = "0.1.0"
 dependencies = [
+ "texp-tui",
+]
+
+[[package]]
+name = "texp-core"
+version = "0.1.0"
+dependencies = [
  "arboard",
- "crossterm",
  "dirs",
  "ignore",
  "lopdf",
- "pulldown-cmark",
- "ratatui",
  "regex",
  "serde",
  "smallvec",
  "toml",
  "trash",
  "winreg",
+]
+
+[[package]]
+name = "texp-tui"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "dirs",
+ "pulldown-cmark",
+ "ratatui",
+ "serde",
+ "texp-core",
+ "toml",
 ]
 
 [[package]]
