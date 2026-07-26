@@ -4,6 +4,11 @@ A terminal-based file manager for Windows, written in Rust.
 
 Built with `ratatui` + `crossterm` for the TUI and `ignore` for filesystem traversal. Russian-language interface.
 
+## Screenshots
+
+![Screenshot 1](screenshots/image_2026-07-26_11-38-55.png)
+![Screenshot 2](screenshots/image_2026-07-26_11-39-27.png)
+
 ## Architecture
 
 Project split into two crates:
