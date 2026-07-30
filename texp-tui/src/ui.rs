@@ -2,7 +2,7 @@ use crate::markdown_parser::markdown_parser;
 use crate::theme::{AppearanceConfig, Icons};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 use std::fs;
 use std::time::Duration;
@@ -145,6 +145,51 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig) {
         f.render_widget(preview, main_layout[1]);
     } else {
         f.render_stateful_widget(list, chunks[2], &mut file_list_state);
+    }
+
+    if app.mode == AppMode::Action || app.mode == AppMode::OpenWith {
+        let menu_height = (app.action.entries.len() + 2).min(30) as u16;
+        let menu_y = if menu_height + 2 < chunks[2].height {
+            chunks[2].y + 1
+        } else {
+            chunks[2].y
+        };
+        let menu_area = Rect::new(chunks[2].x + chunks[2].width / 3, menu_y, 60.min(chunks[2].width.saturating_sub(4)), menu_height.min(chunks[2].height.saturating_sub(1)));
+        let menu_items: Vec<ListItem> = app.action.entries.iter().map(|entry| {
+            let txt = if entry.is_separator {
+                "─".repeat(menu_area.width.saturating_sub(2) as usize)
+            } else if entry.indent > 0 {
+                format!("{:indent$}{}", "", entry.label, indent = entry.indent as usize * 2)
+            } else {
+                entry.label.clone()
+            };
+            ListItem::new(txt)
+        }).collect();
+        let menu_list = List::new(menu_items)
+            .block(Block::default().borders(Borders::ALL).title(" Context Menu "))
+            .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White));
+        let mut list_state = ListState::default().with_selected(Some(app.action.cursor));
+        f.render_widget(Clear, menu_area);
+        f.render_stateful_widget(menu_list, menu_area, &mut list_state);
+    }
+
+    if app.mode == AppMode::OpenWith {
+        let menu_end_x = chunks[2].x + chunks[2].width / 3 + 60.min(chunks[2].width.saturating_sub(4)) + 2;
+        let ow_area = Rect::new(
+            menu_end_x,
+            chunks[2].y + 1,
+            44.min(chunks[2].width.saturating_sub(menu_end_x - chunks[2].x)),
+            (app.open_with.entries.len() as u16 + 2).min(chunks[2].height.saturating_sub(2)),
+        );
+        let ow_items: Vec<ListItem> = app.open_with.entries.iter().map(|entry| {
+            ListItem::new(entry.name.clone())
+        }).collect();
+        let ow_list = List::new(ow_items)
+            .block(Block::default().borders(Borders::ALL).title(" Open With "))
+            .highlight_style(Style::default().bg(Color::DarkGray).fg(Color::White));
+        let mut ow_state = ListState::default().with_selected(Some(app.open_with.cursor));
+        f.render_widget(Clear, ow_area);
+        f.render_stateful_widget(ow_list, ow_area, &mut ow_state);
     }
 
     if snippet_height > 0 {
@@ -592,7 +637,7 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig) {
             Line::from(" e/i            Open editor (in viewer mode)"),
             Line::from(" .              Toggle hidden files"),
             Line::from(" F1 / ?         This help"),
-            Line::from(" Ctrl+A         Action menu (Terminal/Explorer/Default app)"),
+            Line::from(" Ctrl+A         Windows context menu"),
             Line::from(" Ctrl+Y         File properties"),
             Line::from(" Ctrl+C         Copy path to clipboard (in properties)"),
             Line::from(" Alt+Left/Right History back/forward"),
@@ -658,66 +703,6 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig) {
                     .add_modifier(theme.help.title_modifier.0),
             ));
         f.render_widget(Paragraph::new(visible).block(help_block), area);
-    }
-    if app.mode == AppMode::Action {
-        let popup = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(20),
-                Constraint::Percentage(60),
-                Constraint::Percentage(20),
-            ])
-            .split(f.area())[1];
-        let area = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(20),
-                Constraint::Percentage(60),
-                Constraint::Percentage(20),
-            ])
-            .split(popup)[1];
-        f.render_widget(Clear, area);
-
-        let max_visible = (area.height as usize).saturating_sub(2);
-        if app.action.offset > app.action.cursor {
-            app.action.offset = app.action.cursor;
-        }
-        if app.action.cursor >= app.action.offset + max_visible {
-            app.action.offset = app.action.cursor.saturating_sub(max_visible).saturating_add(1);
-        }
-
-        let visible: Vec<ListItem> = app.action.actions[app.action.offset..]
-            .iter()
-            .take(max_visible)
-            .map(|entry| {
-                ListItem::new(format!(" {}\n      {}", entry.label, entry.description))
-            })
-            .collect();
-
-        let total = app.action.actions.len();
-        let action_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.action_menu.border_fg.0))
-            .title(Span::styled(
-                format!(" ACTION MENU  [{}-{}/{}] ",
-                    1 + app.action.offset,
-                    (app.action.offset + max_visible).min(total),
-                    total),
-                Style::default()
-                    .fg(theme.action_menu.title_fg.0)
-                    .add_modifier(theme.action_menu.title_modifier.0),
-            ));
-        let mut action_state = ratatui::widgets::ListState::default();
-        action_state.select(Some(app.action.cursor.saturating_sub(app.action.offset)));
-        let action_list = List::new(visible)
-            .block(action_block)
-            .highlight_symbol(" > ")
-            .highlight_style(
-            Style::default()
-                .bg(theme.action_menu.highlight_bg.0)
-                .fg(theme.action_menu.highlight_fg.0),
-        );
-        f.render_stateful_widget(action_list, area, &mut action_state);
     }
     if app.mode == AppMode::FileInfo {
         let popup = Layout::default()
@@ -896,7 +881,7 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig) {
                         ""
                     };
                         let status_text = if app.nav.selected_files.is_empty() {
-                        format!(" {}{}{}  | [s]Sort | [b]Mark | [B]Bookm | [Ctrl+A]Act | [:]Cmd | [F1]Help | [q]Quit",sort_indicator, filter_display, hidden_indicator)
+                        format!(" {}{}{}  | [s]Sort | [b]Mark | [B]Bookm | [Ctrl+A]Menu | [:]Cmd | [F1]Help | [q]Quit",sort_indicator, filter_display, hidden_indicator)
                     } else {
                         format!(" {}{}{} | Sel: {} | [:] cp mv rm", sort_indicator, filter_display, hidden_indicator, app.nav.selected_files.len())
                     };
@@ -999,10 +984,10 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig) {
             }
             AppMode::FileInfo => Paragraph::new(" [Esc/q] Close  [Ctrl+C] Copy path to clipboard")
                 .style(Style::default().fg(sb.file_info_fg.0).bg(sb.file_info_bg.0)),
-            AppMode::Action => Paragraph::new(
-                " [↑/↓] Select | [Enter] Execute | [Esc/q] Close",
-            )
-            .style(Style::default().fg(sb.action_fg.0).bg(sb.action_bg.0)),
+            AppMode::Action => Paragraph::new(" [↑/↓] Navigate  [Enter] Execute  [Esc] Close")
+                .style(Style::default().fg(sb.action_fg.0).bg(sb.action_bg.0)),
+            AppMode::OpenWith => Paragraph::new(" [↑/↓] Navigate  [Enter] Open in selected  [Esc] Back")
+                .style(Style::default().fg(sb.open_with_fg.0).bg(sb.open_with_bg.0)),
             AppMode::Help => Paragraph::new(" [↑/↓/PgUp/PgDn] Scroll | [Esc/q/F1] Close")
                 .style(Style::default().fg(sb.help_fg.0).bg(sb.help_bg.0)),
         }

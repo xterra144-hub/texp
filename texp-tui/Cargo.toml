@@ -2,7 +2,6 @@
 name = "texp-tui"
 version = "0.1.0"
 edition = "2024"
-
 [dependencies]
 texp-core = { path = "../texp-core" }
 ratatui = "0.30.1"

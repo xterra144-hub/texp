@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -12,67 +11,8 @@ use crate::event::AppEvent;
 use crate::indexer::InMemoryIndex;
 use crate::state::*;
 use std::sync::Arc;
-use winreg::enums::*;
-use winreg::RegKey;
 
-const CREATE_NEW_CONSOLE: u32 = 0x00000010;
-
-fn discover_shell_verbs() -> Vec<ActionEntry> {
-    let mut seen = std::collections::HashSet::new();
-    let mut entries = Vec::new();
-
-    for (hkey, base) in &[
-        (RegKey::predef(HKEY_CURRENT_USER), r"Software\Classes\Directory\shell"),
-        (RegKey::predef(HKEY_LOCAL_MACHINE), r"SOFTWARE\Classes\Directory\shell"),
-    ] {
-        if let Ok(shell) = hkey.open_subkey_with_flags(base, KEY_READ) {
-            for verb in shell.enum_keys().flatten() {
-                if let Ok(vk) = shell.open_subkey_with_flags(&verb, KEY_READ) {
-                    let label: String = vk
-                        .get_value("MUIVerb")
-                        .or_else(|_| vk.get_value(""))
-                        .unwrap_or_else(|_| verb.clone());
-                    if let Ok(cmd_key) = vk.open_subkey_with_flags("command", KEY_READ) {
-                        if let Ok(command) = cmd_key.get_value::<String, _>("") {
-                            if seen.insert(command.clone()) {
-                                entries.push(ActionEntry {
-                                    label,
-                                    command,
-                                    description: format!("Open folder in {}", verb),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    entries
-}
-
-fn build_actions() -> Vec<ActionEntry> {
-    let mut actions = vec![
-        ActionEntry {
-            label: "Open in Terminal".into(),
-            command: "cmd /k".into(),
-            description: "Open cmd in current directory".into(),
-        },
-        ActionEntry {
-            label: "Open in Explorer".into(),
-            command: "explorer".into(),
-            description: "Open folder in Windows Explorer".into(),
-        },
-        ActionEntry {
-            label: "Open with default app".into(),
-            command: "start".into(),
-            description: "Open selected file with default program".into(),
-        },
-    ];
-    actions.extend(discover_shell_verbs());
-    actions
-}
-
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub enum AppMode {
     Normal,
     Command,
@@ -87,6 +27,7 @@ pub enum AppMode {
     Help,
     FileInfo,
     Action,
+    OpenWith,
 }
 pub fn editor_line_starts(buf: &str) -> Vec<usize> {
     let mut starts = vec![0];
@@ -133,6 +74,7 @@ pub struct App {
     pub save_progress: Option<(usize, usize)>,
     pub help_scroll: usize,
     pub action: ActionState,
+    pub open_with: OpenWithState,
 }
 
 impl Drop for App {
@@ -184,7 +126,8 @@ impl App {
             index_rx,
             save_progress: None,
             help_scroll: 0,
-            action: ActionState::new(build_actions()),
+            action: ActionState::new(),
+            open_with: OpenWithState::new(),
         };
 
         app.nav.history = vec![cwd];
@@ -214,6 +157,18 @@ impl App {
     }
 
     pub fn handle_event(&mut self, event: &AppEvent) -> Option<()> {
+        if let AppEvent::ExternalDrop { paths } = event {
+            for src in paths {
+                let file_name = src.file_name().unwrap_or_default();
+                let dest = self.nav.current_dir.join(file_name);
+                if src != &dest {
+                    let _ = std::fs::copy(src, &dest);
+                }
+            }
+            self.refresh_files();
+            self.set_status(format!("Imported {} file(s)", paths.len()));
+            return None;
+        }
         use AppMode::*;
         match self.mode {
             Normal => self.handle_normal(event),
@@ -229,6 +184,7 @@ impl App {
             Help => self.handle_help(event),
             FileInfo => self.handle_file_info(event),
             Action => self.handle_action(event),
+            OpenWith => self.handle_open_with(event),
         }
     }
 
@@ -358,8 +314,29 @@ impl App {
                 }
             }
             AppEvent::Ctrl('a') => {
-                self.mode = AppMode::Action;
-                self.action.cursor = 0;
+                let paths: Vec<PathBuf> = if !self.nav.selected_files.is_empty() {
+                    self.nav.selected_files.iter().cloned().collect()
+                } else if !self.nav.files.is_empty() {
+                    vec![self.nav.files[self.nav.cursor_index].clone()]
+                } else {
+                    self.set_status("No files to show context menu for");
+                    return None;
+                };
+                match crate::winapi_calls::query_context_menu_entries(&paths) {
+                    Ok(entries) => {
+                        self.action.entries = entries.into_iter().map(|e| ActionEntry {
+                            label: e.label,
+                            verb: e.verb,
+                            is_separator: e.is_separator,
+                            indent: e.indent,
+                            cmd_id: e.cmd_id,
+                        }).collect();
+                        self.action.cursor = 0;
+                        self.action.offset = 0;
+                        self.mode = AppMode::Action;
+                    }
+                    Err(e) => self.set_status(format!("Context menu error: {}", e)),
+                }
             }
             AppEvent::Char(c) => {
                 if let Some((done, total)) = self.save_progress {
@@ -370,6 +347,10 @@ impl App {
                 }
                 self.nav.filter_input.push(*c);
                 self.apply_filter();
+            }
+            AppEvent::DropFile { source, dest } => {
+                let _ = std::fs::copy(source, dest);
+                self.refresh_files();
             }
             _ => {
                 if let Some((done, total)) = self.save_progress {
@@ -900,70 +881,76 @@ impl App {
 
     fn handle_action(&mut self, event: &AppEvent) -> Option<()> {
         match event {
-            AppEvent::Escape | AppEvent::Char('q') => {
-                self.mode = AppMode::Normal;
-            }
+            AppEvent::Escape => self.mode = AppMode::Normal,
             AppEvent::Up => {
                 if self.action.cursor > 0 {
                     self.action.cursor -= 1;
-                    if self.action.cursor < self.action.offset {
-                        self.action.offset = self.action.cursor;
-                    }
                 }
             }
             AppEvent::Down => {
-                if self.action.cursor + 1 < self.action.actions.len() {
+                if self.action.cursor + 1 < self.action.entries.len() {
                     self.action.cursor += 1;
                 }
             }
             AppEvent::Enter => {
-                let cwd = &self.nav.current_dir;
-                let Some(entry) = self.action.actions.get(self.action.cursor) else {
-                    return None;
-                };
-                let cmd = &entry.command;
-                let result = if cmd == "cmd /k" {
-                    std::process::Command::new("cmd")
-                        .arg("/k")
-                        .current_dir(cwd)
-                        .creation_flags(CREATE_NEW_CONSOLE)
-                        .spawn()
-                        .err()
-                        .map(|e| format!("Failed to open terminal: {}", e))
-                } else if cmd == "explorer" {
-                    std::process::Command::new("explorer")
-                        .arg(cwd.as_os_str())
-                        .spawn()
-                        .err()
-                        .map(|e| format!("Failed to open explorer: {}", e))
-                } else if cmd == "start" {
-                    let target = self.nav.files.get(self.nav.cursor_index)
-                        .cloned()
-                        .unwrap_or_else(|| cwd.clone());
-                    let _ = std::process::Command::new("cmd")
-                        .args(["/c", "start", "", &target.to_string_lossy()])
-                        .spawn();
-                    None
-                } else {
-                    let target = self.nav.files.get(self.nav.cursor_index)
-                        .cloned()
-                        .unwrap_or_else(|| cwd.clone());
-                    if cmd.contains("%1") {
-                        let expanded = cmd.replace("%1", &target.to_string_lossy());
-                        let _ = std::process::Command::new("cmd")
-                            .args(["/c", &expanded])
-                            .creation_flags(CREATE_NEW_CONSOLE)
-                            .spawn();
-                    } else {
-                        let _ = std::process::Command::new("cmd")
-                            .args(["/c", cmd, &target.to_string_lossy()])
-                            .creation_flags(CREATE_NEW_CONSOLE)
-                            .spawn();
+                if let Some(entry) = self.action.entries.get(self.action.cursor) {
+                    if !entry.is_separator {
+                        let paths: Vec<PathBuf> = if !self.nav.selected_files.is_empty() {
+                            self.nav.selected_files.iter().cloned().collect()
+                        } else if !self.nav.files.is_empty() {
+                            vec![self.nav.files[self.nav.cursor_index].clone()]
+                        } else {
+                            return None;
+                        };
+                        if entry.verb == "open" {
+                            let path = paths[0].clone();
+                            let entries = crate::winapi_calls::query_open_with_entries(&path);
+                            self.open_with.entries = entries;
+                            self.open_with.cursor = 0;
+                            self.mode = AppMode::OpenWith;
+                            return None;
+                        }
+                        if let Err(e) = crate::winapi_calls::invoke_verb(&paths, &entry.verb, entry.cmd_id) {
+                            self.set_status(format!("Invoke error: {}", e));
+                        }
                     }
-                    None
-                };
-                if let Some(msg) = result {
-                    self.set_status(msg);
+                }
+                self.mode = AppMode::Normal;
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn handle_open_with(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape => self.mode = AppMode::Action,
+            AppEvent::Up => {
+                if self.open_with.cursor > 0 {
+                    self.open_with.cursor -= 1;
+                }
+            }
+            AppEvent::Down => {
+                if self.open_with.cursor + 1 < self.open_with.entries.len() {
+                    self.open_with.cursor += 1;
+                }
+            }
+            AppEvent::Enter => {
+                if let Some(entry) = self.open_with.entries.get(self.open_with.cursor) {
+                    let path = if !self.nav.selected_files.is_empty() {
+                        self.nav.selected_files.iter().next().unwrap().clone()
+                    } else if !self.nav.files.is_empty() {
+                        self.nav.files[self.nav.cursor_index].clone()
+                    } else {
+                        return None;
+                    };
+                    if entry.name == "Open in Explorer" {
+                        if let Err(e) = crate::winapi_calls::invoke_verb(&[path], "open", 0) {
+                            self.set_status(format!("Invoke error: {}", e));
+                        }
+                    } else if !entry.exe_path.is_empty() {
+                        let _ = std::process::Command::new(&entry.exe_path).arg(&path).spawn();
+                    }
                 }
                 self.mode = AppMode::Normal;
             }
@@ -1013,9 +1000,6 @@ impl App {
             }
         }
         self.save_bookmarks();
-    }
-
-    pub fn try_recv_suggestions(&mut self) {
     }
 
     pub fn try_recv_index_status(&mut self) {

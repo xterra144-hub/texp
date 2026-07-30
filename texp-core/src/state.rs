@@ -2,6 +2,7 @@ use crate::grep::Match;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::{Instant, SystemTime};
+#[derive(Clone)]
 pub struct DirEntry {
     pub is_dir: bool,
     pub modified: Option<SystemTime>,
@@ -175,24 +176,6 @@ impl DiskUsageState {
         }
     }
 }
-pub struct ActionEntry {
-    pub label: String,
-    pub command: String,
-    pub description: String,
-}
-
-pub struct ActionState {
-    pub actions: Vec<ActionEntry>,
-    pub cursor: usize,
-    pub offset: usize,
-}
-
-impl ActionState {
-    pub fn new(actions: Vec<ActionEntry>) -> Self {
-        Self { actions, cursor: 0, offset: 0 }
-    }
-}
-
 pub struct SearchState {
     pub search_query: String,
 }
@@ -202,6 +185,44 @@ impl SearchState {
         Self {
             search_query: String::new(),
         }
+    }
+}
+
+#[derive(Clone)]
+pub struct ActionEntry {
+    pub label: String,
+    pub verb: String,
+    pub is_separator: bool,
+    pub indent: u32,
+    pub cmd_id: u32,
+}
+
+pub struct ActionState {
+    pub entries: Vec<ActionEntry>,
+    pub cursor: usize,
+    pub offset: usize,
+}
+
+impl ActionState {
+    pub fn new() -> Self {
+        Self { entries: Vec::new(), cursor: 0, offset: 0 }
+    }
+}
+
+#[derive(Clone)]
+pub struct OpenWithEntry {
+    pub name: String,
+    pub exe_path: String,
+}
+
+pub struct OpenWithState {
+    pub entries: Vec<OpenWithEntry>,
+    pub cursor: usize,
+}
+
+impl OpenWithState {
+    pub fn new() -> Self {
+        Self { entries: Vec::new(), cursor: 0 }
     }
 }
 

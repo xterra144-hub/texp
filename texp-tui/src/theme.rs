@@ -584,16 +584,20 @@ pub struct StatusBarTheme {
     pub help_fg: ThemeColor,
     #[serde(default = "default_sb_help_bg")]
     pub help_bg: ThemeColor,
+    #[serde(default = "default_sb_action_fg")]
+    pub action_fg: ThemeColor,
+    #[serde(default = "default_sb_action_bg")]
+    pub action_bg: ThemeColor,
+    #[serde(default = "default_sb_open_with_fg")]
+    pub open_with_fg: ThemeColor,
+    #[serde(default = "default_sb_open_with_bg")]
+    pub open_with_bg: ThemeColor,
     #[serde(default = "default_sb_save_fg")]
     pub save_fg: ThemeColor,
     #[serde(default = "default_sb_save_bg")]
     pub save_bg: ThemeColor,
     #[serde(default = "default_sb_save_modifier")]
     pub save_modifier: ThemeModifier,
-    #[serde(default = "default_sb_action_fg")]
-    pub action_fg: ThemeColor,
-    #[serde(default = "default_sb_action_bg")]
-    pub action_bg: ThemeColor,
 }
 fn default_sb_normal_fg() -> ThemeColor { ThemeColor::rgb(158, 206, 106) }
 fn default_sb_normal_bg() -> ThemeColor { ThemeColor::rgb(26, 27, 30) }
@@ -629,6 +633,8 @@ fn default_sb_save_bg() -> ThemeColor { ThemeColor::rgb(158, 206, 106) }
 fn default_sb_save_modifier() -> ThemeModifier { ThemeModifier(Modifier::BOLD) }
 fn default_sb_action_fg() -> ThemeColor { ThemeColor::rgb(26, 27, 30) }
 fn default_sb_action_bg() -> ThemeColor { ThemeColor::rgb(122, 162, 247) }
+fn default_sb_open_with_fg() -> ThemeColor { ThemeColor::rgb(26, 27, 30) }
+fn default_sb_open_with_bg() -> ThemeColor { ThemeColor::rgb(158, 206, 106) }
 
 impl Default for StatusBarTheme {
     fn default() -> Self {
@@ -667,6 +673,8 @@ impl Default for StatusBarTheme {
             save_modifier: default_sb_save_modifier(),
             action_fg: default_sb_action_fg(),
             action_bg: default_sb_action_bg(),
+            open_with_fg: default_sb_open_with_fg(),
+            open_with_bg: default_sb_open_with_bg(),
         }
     }
 }

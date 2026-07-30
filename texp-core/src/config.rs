@@ -34,13 +34,13 @@ fn default_skip_dirs() -> Vec<String> {
     ]
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct General {
     #[serde(default = "default_bookmarks")]
     pub bookmarks_file: PathBuf,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Indexing {
     #[serde(default = "default_skip_dirs")]
     pub skip_dirs: Vec<String>,

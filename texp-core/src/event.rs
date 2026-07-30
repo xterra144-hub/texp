@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppEvent {
     Up,
@@ -22,4 +24,6 @@ pub enum AppEvent {
     CtrlLeft,
     CtrlRight,
     F(u8),
+    DropFile { source: PathBuf, dest: PathBuf },
+    ExternalDrop { paths: Vec<PathBuf> },
 }
