@@ -20,7 +20,7 @@ This separation allows alternative frontends (GUI, web) without modifying core l
 
 ## Features
 
-- **Single-panel navigation with preview** — browse directories, optional side panel shows file preview (text, images, PDF, Markdown)
+- **Single-panel navigation with preview** — browse directories; the side panel shows a depth-2 directory tree for folders, or file preview (text, images, PDF, Markdown)
 - **File selection** — multi-select with Space for bulk operations
 - **Command mode** (`:` vim-style) — `:cp`, `:mv`, `:rm` (to Recycle Bin), `:mkdir`, `:touch`
 - **Search by name** (`:find`) — SQLite-backed, literal substring match
@@ -34,18 +34,20 @@ This separation allows alternative frontends (GUI, web) without modifying core l
 - **Bookmarks** — save/load favorite directories (stored in `~/.my_fm_bookmarks`)
 - **File properties popup** — Ctrl+Y shows name, path, type, size, modification date; Ctrl+C copies path
 - **Hidden files toggle** — `.` to show/hide files starting with `.`
-- **Auto-completion** — path suggestions while typing commands
+- **Command snippets** (`:` vim-style) — Tab applies a suggested base command while typing
+- **Extensible suggestions** — `SuggestionProvider` trait in `texp-core/src/suggestions.rs`; plug in external tools like `fd`/`rg` as providers
 - **Markdown rendering** — styled preview (headings, code, links, lists) in preview panel and viewer
 - **PDF preview** — extracts text from first 5 pages with LRU caching
 - **Exit auto-save** — on `q`/`:q` with unsaved editor changes, auto-saves and shows progress bar before exiting
 - **Customizable config** — TOML file at `<config>/texp/config.toml` or `./texp.toml`
 - **CLI argument** — `texp [path]` to start in a specific directory
-
+- **Pictures preview** -- texp use 'kitty protocol' for showing pictures on preview block
 ## Installation
 
 ### Requirements
 
 - **Rust toolchain** (edition 2024) — install from [rustup.rs](https://rustup.rs/)
+- **fd** (optional) — instant `:find` and path suggestions; without it the built-in ART index is used
 
 ### Build & Install
 
@@ -107,10 +109,13 @@ Navigate with arrow keys. Press `:` to enter command mode. Press `q` or `Esc` to
 | `:` | Normal | Enter command mode |
 | `q` | Normal | Quit (auto-saves modified files first) |
 | `Ctrl+Y` | Normal | Show file properties popup |
+| `Ctrl+B` | Any | Jump to breadcrumbs navigation |
 | `Alt+Left` / `Alt+Right` | Normal | Navigate back/forward in history |
 | `Esc` | Command | Exit command mode |
 | `Enter` | Command | Execute command |
-| `Tab` / `↑` / `↓` | Command | Cycle autocomplete suggestions |
+| `Enter` | Command | Substitute highlighted snippet / execute command |
+| `Tab` | Command | Apply selected command snippet |
+| `↑` / `↓` | Command | Cycle command snippets / history |
 | `PgUp` / `PgDn` | Viewer | Scroll up/down |
 | `e` / `i` | Viewer | Open editor |
 | `↑↓←→` | Editor | Move cursor |
@@ -136,7 +141,7 @@ Navigate with arrow keys. Press `:` to enter command mode. Press `q` or `Esc` to
 | `:rm`                          | Delete selected file(s) to Recycle Bin                                   |
 | `:mkdir <name>`                | Create directory                                                         |
 | `:touch <name>`                | Create empty file                                                        |
-| `:find <name>`                 | Search indexed files by name (SQLite LIKE)                               |
+| `:find <name>`                 | Search files by name (fd, fallback to ART index)                         |
 | `:grep <query>`                | Case-insensitive literal content search                                  |
 | `:grep re:<pattern>`           | Regex content search                                                     |
 | `:du`                          | Analyze disk usage of current directory                                  |

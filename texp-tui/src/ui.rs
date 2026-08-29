@@ -1,3 +1,4 @@
+use crate::kitty_preview::PreviewModule;
 use crate::markdown_parser::markdown_parser;
 use crate::theme::{AppearanceConfig, Icons};
 use ratatui::{
@@ -9,7 +10,7 @@ use std::time::Duration;
 use texp_core::app::{App, AppMode, editor_line_starts};
 use texp_core::state::*;
 
-pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig) {
+pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview: &mut PreviewModule) {
     let theme = &appearance.theme;
     let icons = &appearance.icons;
     let snippet_height = if app.mode == AppMode::Command && !app.cmd.command_suggestion.is_empty() {
@@ -122,8 +123,13 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig) {
             .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
             .split(chunks[2]);
         f.render_stateful_widget(list, main_layout[0], &mut file_list_state);
-        let preview_style = Style::default().fg(theme.preview.content_fg.0).bg(theme.preview.content_bg.0);
-        let preview: Paragraph =
+        let cursor_path = app.nav.files.get(app.nav.cursor_index);
+        preview.sync_path(cursor_path.map(|p| p.as_path()));
+        if cursor_path.is_some_and(|p| App::is_image(p)) {
+            preview.update(f, main_layout[1]);
+        } else {
+            let preview_style = Style::default().fg(theme.preview.content_fg.0).bg(theme.preview.content_bg.0);
+            let preview: Paragraph =
             if app.preview.preview_is_md && !app.preview.preview_content.is_empty() {
                 let md_lines = markdown_parser(&app.preview.preview_content, &theme.markdown);
                 Paragraph::new(md_lines).block(
@@ -142,7 +148,8 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig) {
                             .title(Span::styled("Preview ", Style::default().fg(theme.preview.title_fg.0))),
                     )
             };
-        f.render_widget(preview, main_layout[1]);
+            f.render_widget(preview, main_layout[1]);
+        }
     } else {
         f.render_stateful_widget(list, chunks[2], &mut file_list_state);
     }
@@ -214,13 +221,13 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig) {
             } else {
                 "  "
             };
-            suggest_items.push(
-                ListItem::new(format!(
-                    "{}{}",
-                    prefix, &app.cmd.command_suggestion[abs_idx]
-                ))
-                .style(style),
-            );
+            let sugg = &app.cmd.command_suggestion[abs_idx];
+            let text = if sugg.description.is_empty() {
+                sugg.text.clone()
+            } else {
+                format!("{}  — {}", sugg.text, sugg.description)
+            };
+            suggest_items.push(ListItem::new(format!("{}{}", prefix, text)).style(style));
         }
         if end < total {
             suggest_items.push(ListItem::new(format!(
@@ -638,6 +645,7 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig) {
             Line::from(" .              Toggle hidden files"),
             Line::from(" F1 / ?         This help"),
             Line::from(" Ctrl+A         Windows context menu"),
+            Line::from(" Ctrl+B         Breadcrumbs navigation (any mode)"),
             Line::from(" Ctrl+Y         File properties"),
             Line::from(" Ctrl+C         Copy path to clipboard (in properties)"),
             Line::from(" Alt+Left/Right History back/forward"),

@@ -112,11 +112,12 @@ impl EditorState {
 }
 pub struct CommandState {
     pub command_input: String,
-    pub command_suggestion: Vec<String>,
+    pub command_suggestion: Vec<crate::suggestions::Suggestion>,
     pub suggestion_index: usize,
     pub suggestion_scroll: usize,
     pub command_history: Vec<String>,
     pub command_history_index: usize,
+    pub suggestion_providers: Vec<Box<dyn crate::suggestions::SuggestionProvider>>,
 }
 
 impl CommandState {
@@ -128,6 +129,10 @@ impl CommandState {
             suggestion_scroll: 0,
             command_history: Vec::new(),
             command_history_index: 0,
+            suggestion_providers: vec![
+                Box::new(crate::suggestions::CommandSnippetProvider),
+                Box::new(crate::suggestions::FdPathProvider),
+            ],
         }
     }
 }
@@ -195,6 +200,23 @@ pub struct ActionEntry {
     pub is_separator: bool,
     pub indent: u32,
     pub cmd_id: u32,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ClipboardMode {
+    Copy,
+    Cut,
+}
+
+pub struct FileClipboardState {
+    pub mode: ClipboardMode,
+    pub paths: Vec<PathBuf>,
+}
+
+impl FileClipboardState {
+    pub fn new() -> Self {
+        Self { mode: ClipboardMode::Copy, paths: Vec::new() }
+    }
 }
 
 pub struct ActionState {

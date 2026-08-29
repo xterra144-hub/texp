@@ -13,4 +13,7 @@ arboard = "3.2"
 lopdf = "0.34"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
+mime_guess = "2.0.4"
+
+[target.'cfg(windows)'.dependencies]
 winreg = "0.52"

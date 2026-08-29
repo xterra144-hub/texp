@@ -2,7 +2,9 @@ use serde::Deserialize;
 use std::path::PathBuf;
 
 fn data_dir() -> PathBuf {
-    PathBuf::from(".texp")
+    dirs::config_dir()
+        .map(|d| d.join("texp").join(".texp"))
+        .unwrap_or_else(|| PathBuf::from(".texp"))
 }
 fn default_bookmarks() -> PathBuf {
     data_dir().join("bookmarks.txt")

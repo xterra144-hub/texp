@@ -1,14 +1,19 @@
 pub mod markdown_parser;
 pub mod theme;
 pub mod ui;
-
+pub mod kitty_preview;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
-use std::io;
+use ratatui_image::picker::Picker;
+use std::{
+    io,
+    sync::Arc,
+    time::Duration,
+};
 use texp_core::app::App;
 use texp_core::event::AppEvent;
 
@@ -73,22 +78,30 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let appearance = theme::AppearanceConfig::load();
 
+    let picker = Arc::new(
+        Picker::from_query_stdio()
+            .unwrap_or_else(|_| Picker::halfblocks()),
+    );
+    let mut preview = kitty_preview::PreviewModule::new(picker);
+
     loop {
         app.try_recv_index_status();
 
-        terminal.draw(|f| ui::draw(f, &mut app, &appearance))?;
+        terminal.draw(|f| ui::draw(f, &mut app, &appearance, &mut preview))?;
 
-        if let Event::Key(key) = event::read()? {
-            if key.kind == event::KeyEventKind::Release {
-                continue;
-            }
+        if event::poll(Duration::from_millis(150))? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == event::KeyEventKind::Release {
+                    continue;
+                }
 
-            if let Some(app_event) = translate_key(key.code, key.modifiers) {
-                if app.handle_event(&app_event).is_some() {
-                    app.save_bookmarks();
-                    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-                    cleanup()?;
-                    return Ok(());
+                if let Some(app_event) = translate_key(key.code, key.modifiers) {
+                    if app.handle_event(&app_event).is_some() {
+                        app.save_bookmarks();
+                        execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+                        cleanup()?;
+                        return Ok(());
+                    }
                 }
             }
         }

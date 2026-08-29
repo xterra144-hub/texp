@@ -12,6 +12,11 @@ use crate::indexer::InMemoryIndex;
 use crate::state::*;
 use std::sync::Arc;
 
+#[cfg(windows)]
+use crate::winapi_calls as shell;
+#[cfg(not(windows))]
+use crate::linux_calls as shell;
+
 #[derive(Clone, PartialEq)]
 pub enum AppMode {
     Normal,
@@ -55,6 +60,36 @@ pub fn cursor_byte_offset(buf: &str, line: usize, col: usize) -> usize {
         + line_start
 }
 
+fn unique_target(dest: &Path, name: &str) -> PathBuf {
+    let base = Path::new(name);
+    let stem = base.file_stem().unwrap_or(base.as_os_str()).to_string_lossy().to_string();
+    let ext = base
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let mut target = dest.join(name);
+    let mut i = 1;
+    while target.exists() {
+        target = dest.join(format!("{}_{}{}", stem, i, ext));
+        i += 1;
+    }
+    target
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let target = dst.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir_all(&entry.path(), &target)?;
+        } else {
+            fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
 pub struct App {
     pub mode: AppMode,
     pub config: Config,
@@ -75,6 +110,7 @@ pub struct App {
     pub help_scroll: usize,
     pub action: ActionState,
     pub open_with: OpenWithState,
+    pub clipboard: FileClipboardState,
 }
 
 impl Drop for App {
@@ -128,6 +164,7 @@ impl App {
             help_scroll: 0,
             action: ActionState::new(),
             open_with: OpenWithState::new(),
+            clipboard: FileClipboardState::new(),
         };
 
         app.nav.history = vec![cwd];
@@ -167,6 +204,11 @@ impl App {
             }
             self.refresh_files();
             self.set_status(format!("Imported {} file(s)", paths.len()));
+            return None;
+        }
+        if let AppEvent::Ctrl('b') = event {
+            self.mode = AppMode::Breadcrumbs;
+            self.nav.path_cursor = self.nav.path_segments.len().saturating_sub(1);
             return None;
         }
         use AppMode::*;
@@ -264,8 +306,8 @@ impl App {
             }
             AppEvent::Char(':') => {
                 self.mode = AppMode::Command;
-                self.cmd.command_input.clear();
-                self.cmd.command_suggestion.clear();
+                self.cmd.command_input = ":".to_string();
+                self.update_suggestion();
             }
             AppEvent::Char('b') => self.toggle_bookmarks(),
             AppEvent::Char('s') => self.cycle_sort(),
@@ -322,7 +364,7 @@ impl App {
                     self.set_status("No files to show context menu for");
                     return None;
                 };
-                match crate::winapi_calls::query_context_menu_entries(&paths) {
+                match shell::query_context_menu_entries(&paths) {
                     Ok(entries) => {
                         self.action.entries = entries.into_iter().map(|e| ActionEntry {
                             label: e.label,
@@ -331,12 +373,25 @@ impl App {
                             indent: e.indent,
                             cmd_id: e.cmd_id,
                         }).collect();
+                        #[cfg(not(windows))]
+                        if self.clipboard.paths.is_empty() {
+                            self.action.entries.retain(|e| e.verb != "paste");
+                        }
                         self.action.cursor = 0;
                         self.action.offset = 0;
                         self.mode = AppMode::Action;
                     }
                     Err(e) => self.set_status(format!("Context menu error: {}", e)),
                 }
+            }
+            AppEvent::Ctrl('x') => {
+                self.cut_to_clipboard();
+            }
+            AppEvent::Ctrl('c') => {
+                self.copy_to_clipboard();
+            }
+            AppEvent::Ctrl('v') => {
+                self.paste_files();
             }
             AppEvent::Char(c) => {
                 if let Some((done, total)) = self.save_progress {
@@ -372,6 +427,25 @@ impl App {
                 self.cmd.command_suggestion.clear();
             }
             AppEvent::Enter => {
+                // For :find, the highlighted suggestion completes the query,
+                // then the search executes with the completed name.
+                let is_find = self.cmd.command_input.starts_with(":find ");
+                if is_find || !self.cmd.command_suggestion.is_empty() {
+                    if let Some(sugg) = self.cmd.command_suggestion.get(self.cmd.suggestion_index)
+                    {
+                        if is_find {
+                            let completed = sugg.text.trim_end_matches('/');
+                            self.cmd.command_input = format!(":find {}", completed);
+                        } else if sugg.text.trim_end() != self.cmd.command_input.trim() {
+                            // Snippet highlighted and not typed out yet:
+                            // substitute it instead of executing.
+                            let text = sugg.text.clone();
+                            self.cmd.command_input = text;
+                            self.update_suggestion();
+                            return None;
+                        }
+                    }
+                }
                 let input = self.cmd.command_input.trim().to_string();
                 if !input.is_empty()
                     && (self.cmd.command_history.is_empty()
@@ -384,42 +458,6 @@ impl App {
                     self.cmd.command_history_index = self.cmd.command_history.len();
                 }
                 if input.starts_with(":find") {
-                    if self.cmd.suggestion_index > 0 {
-                        if let Some(suggestion) =
-                            self.cmd.command_suggestion.get(self.cmd.suggestion_index)
-                        {
-                            let suggestion = suggestion.clone();
-                            self.cmd.command_suggestion.clear();
-                            self.cmd.command_input.clear();
-                            self.cmd.suggestion_index = 0;
-                            if suggestion.ends_with('/') {
-                                let dir_path = PathBuf::from(suggestion.trim_end_matches('/'));
-                                if dir_path.is_dir() {
-                                    self.push_history();
-                                    self.nav.current_dir = dir_path;
-                                    self.nav.cursor_index = 0;
-                                    self.refresh_files();
-                                }
-                            } else {
-                                let file_path = PathBuf::from(&suggestion);
-                                if file_path.is_file() {
-                                    if let Some(parent) = file_path.parent() {
-                                        self.push_history();
-                                        self.nav.current_dir = parent.to_path_buf();
-                                    }
-                                    self.refresh_files();
-                                    if let Ok(text) = fs::read_to_string(&file_path) {
-                                        self.preview.preview_content = text;
-                                        self.preview.preview_scroll = 0;
-                                    }
-                                    self.mode = AppMode::Viewer;
-                                    return None;
-                                }
-                            }
-                            self.mode = AppMode::Normal;
-                            return None;
-                        }
-                    }
                     self.execute_command();
                     if self.mode == AppMode::Command {
                         self.mode = AppMode::Normal;
@@ -502,12 +540,21 @@ impl App {
             }
             AppEvent::Backspace => {
                 self.cmd.command_input.pop();
-                self.update_suggestion();
+                if self.cmd.command_input.is_empty() {
+                    self.mode = AppMode::Normal;
+                } else {
+                    self.update_suggestion();
+                }
             }
-            AppEvent::Tab | AppEvent::Down => {
+            AppEvent::Tab => {
                 if !self.cmd.command_suggestion.is_empty() {
-                    self.cmd.suggestion_index =
-                        (self.cmd.suggestion_index + 1) % self.cmd.command_suggestion.len();
+                    if let Some(suggestion) =
+                        self.cmd.command_suggestion.get(self.cmd.suggestion_index)
+                    {
+                        let text = suggestion.text.clone();
+                        self.cmd.command_input = text;
+                        self.update_suggestion();
+                    }
                 } else if !self.cmd.command_history.is_empty() {
                     if self.cmd.command_history_index < self.cmd.command_history.len() - 1 {
                         self.cmd.command_history_index += 1;
@@ -518,6 +565,12 @@ impl App {
                         self.cmd.command_history_index = self.cmd.command_history.len();
                         self.cmd.command_input.clear();
                     }
+                }
+            }
+            AppEvent::Down => {
+                if !self.cmd.command_suggestion.is_empty() {
+                    self.cmd.suggestion_index =
+                        (self.cmd.suggestion_index + 1) % self.cmd.command_suggestion.len();
                 }
             }
             AppEvent::Up => {
@@ -904,13 +957,45 @@ impl App {
                         };
                         if entry.verb == "open" {
                             let path = paths[0].clone();
-                            let entries = crate::winapi_calls::query_open_with_entries(&path);
+                            let entries = shell::query_open_with_entries(&path);
                             self.open_with.entries = entries;
                             self.open_with.cursor = 0;
                             self.mode = AppMode::OpenWith;
                             return None;
                         }
-                        if let Err(e) = crate::winapi_calls::invoke_verb(&paths, &entry.verb, entry.cmd_id) {
+                        #[cfg(not(windows))]
+                        match entry.verb.as_str() {
+                            "cut" => {
+                                self.cut_to_clipboard();
+                                self.mode = AppMode::Normal;
+                                return None;
+                            }
+                            "copy" => {
+                                self.copy_to_clipboard();
+                                self.mode = AppMode::Normal;
+                                return None;
+                            }
+                            "paste" => {
+                                self.paste_files();
+                                self.mode = AppMode::Normal;
+                                return None;
+                            }
+                            "delete" => {
+                                self.mode = AppMode::ConfirmDelete;
+                                return None;
+                            }
+                            "rename" => {
+                                self.cmd.command_input = ":rn ".to_string();
+                                self.mode = AppMode::Command;
+                                return None;
+                            }
+                            "properties" => {
+                                self.mode = AppMode::FileInfo;
+                                return None;
+                            }
+                            _ => {}
+                        }
+                        if let Err(e) = shell::invoke_verb(&paths, &entry.verb, entry.cmd_id) {
                             self.set_status(format!("Invoke error: {}", e));
                         }
                     }
@@ -944,12 +1029,36 @@ impl App {
                     } else {
                         return None;
                     };
-                    if entry.name == "Open in Explorer" {
-                        if let Err(e) = crate::winapi_calls::invoke_verb(&[path], "open", 0) {
-                            self.set_status(format!("Invoke error: {}", e));
+                    #[cfg(windows)]
+                    {
+                        if entry.name == "Open in Explorer" {
+                            if let Err(e) = shell::invoke_verb(&[path], "open", 0) {
+                                self.set_status(format!("Invoke error: {}", e));
+                            }
+                        } else if !entry.exe_path.is_empty() {
+                            let _ = std::process::Command::new(&entry.exe_path).arg(&path).spawn();
                         }
-                    } else if !entry.exe_path.is_empty() {
-                        let _ = std::process::Command::new(&entry.exe_path).arg(&path).spawn();
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        if entry.name == "Открыть по умолчанию" {
+                            if let Err(e) = shell::invoke_verb(&[path], "open", 0) {
+                                self.set_status(format!("Invoke error: {}", e));
+                            }
+                        } else if entry.name == "Открыть в файловом менеджере" {
+                            let dir = if path.is_dir() {
+                                path.clone()
+                            } else {
+                                path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| self.nav.current_dir.clone())
+                            };
+                            if let Err(e) = shell::invoke_verb(&[dir], "open", 0) {
+                                self.set_status(format!("Invoke error: {}", e));
+                            }
+                        } else if !entry.exe_path.is_empty() {
+                            if let Err(e) = shell::invoke_verb(&[path], &entry.exe_path, 0) {
+                                self.set_status(format!("Invoke error: {}", e));
+                            }
+                        }
                     }
                 }
                 self.mode = AppMode::Normal;
@@ -980,6 +1089,86 @@ impl App {
             _ => {}
         }
         None
+    }
+
+    fn clip_paths(&self) -> Vec<PathBuf> {
+        if !self.nav.selected_files.is_empty() {
+            self.nav.selected_files.iter().cloned().collect()
+        } else if !self.nav.files.is_empty() {
+            vec![self.nav.files[self.nav.cursor_index].clone()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn cut_to_clipboard(&mut self) {
+        let paths = self.clip_paths();
+        if paths.is_empty() {
+            self.set_status("No file selected");
+            return;
+        }
+        self.clipboard.mode = ClipboardMode::Cut;
+        self.clipboard.paths = paths.clone();
+        self.set_status(format!("Cut {} item(s) to clipboard", paths.len()));
+    }
+
+    fn copy_to_clipboard(&mut self) {
+        let paths = self.clip_paths();
+        if paths.is_empty() {
+            self.set_status("No file selected");
+            return;
+        }
+        self.clipboard.mode = ClipboardMode::Copy;
+        self.clipboard.paths = paths.clone();
+        self.set_status(format!("Copied {} item(s) to clipboard", paths.len()));
+    }
+
+    fn paste_files(&mut self) {
+        if self.clipboard.paths.is_empty() {
+            self.set_status("Clipboard is empty");
+            return;
+        }
+        let dest = self.nav.current_dir.clone();
+        let mut count = 0usize;
+        let mut errors: Vec<String> = Vec::new();
+        let paths: Vec<PathBuf> = self.clipboard.paths.clone();
+        for src in &paths {
+            let Some(file_name) = src.file_name() else { continue };
+            let name = file_name.to_string_lossy().to_string();
+            let target = unique_target(&dest, &name);
+            if self.clipboard.mode == ClipboardMode::Cut {
+                if src.parent().is_some_and(|p| p == dest.as_path()) {
+                    continue;
+                }
+                match fs::rename(src, &target) {
+                    Ok(()) => count += 1,
+                    Err(e) => errors.push(format!("{}: {}", name, e)),
+                }
+            } else if src.is_dir() {
+                if dest.starts_with(src) {
+                    errors.push(format!("{}: cannot copy folder into itself", name));
+                    continue;
+                }
+                match copy_dir_all(src, &target) {
+                    Ok(()) => count += 1,
+                    Err(e) => errors.push(format!("{}: {}", name, e)),
+                }
+            } else {
+                match fs::copy(src, &target) {
+                    Ok(_) => count += 1,
+                    Err(e) => errors.push(format!("{}: {}", name, e)),
+                }
+            }
+        }
+        if self.clipboard.mode == ClipboardMode::Cut {
+            self.clipboard.paths.clear();
+        }
+        self.refresh_files();
+        if !errors.is_empty() {
+            self.set_status(format!("{} file(s) done; errors: {}", count, errors.join(", ")));
+        } else {
+            self.set_status(format!("{} item(s) pasted", count));
+        }
     }
 
     pub fn save_bookmarks(&self) {
@@ -1238,6 +1427,95 @@ impl App {
         }
     }
 
+    fn dir_children(path: &Path, show_hidden: bool) -> Vec<(PathBuf, bool)> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        let mut files: Vec<PathBuf> = Vec::new();
+        if let Ok(rd) = fs::read_dir(path) {
+            for entry in rd.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') && !show_hidden {
+                    continue;
+                }
+                let p = entry.path();
+                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+                    dirs.push(p);
+                } else {
+                    files.push(p);
+                }
+            }
+        }
+        let by_name = |a: &PathBuf, b: &PathBuf| {
+            let an = a.file_name().map(|n| n.to_string_lossy().to_lowercase());
+            let bn = b.file_name().map(|n| n.to_string_lossy().to_lowercase());
+            an.cmp(&bn)
+        };
+        dirs.sort_by(by_name);
+        files.sort_by(by_name);
+        dirs.into_iter()
+            .map(|p| (p, true))
+            .chain(files.into_iter().map(|p| (p, false)))
+            .collect()
+    }
+
+    fn build_tree_level(
+        dir: &Path,
+        prefix: &str,
+        depth: usize,
+        show_hidden: bool,
+        budget: &mut usize,
+        lines: &mut Vec<String>,
+    ) -> bool {
+        if depth == 0 || *budget == 0 {
+            return true;
+        }
+        let children = Self::dir_children(dir, show_hidden);
+        let total = children.len();
+        for (i, (child, is_dir)) in children.iter().enumerate() {
+            if *budget == 0 {
+                return false;
+            }
+            *budget -= 1;
+            let last = i + 1 == total;
+            let branch = if last { "└── " } else { "├── " };
+            let name = child
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| child.to_string_lossy().to_string());
+            if *is_dir {
+                lines.push(format!("{}{}{}/", prefix, branch, name));
+                let child_prefix = format!("{}{}", prefix, if last { "    " } else { "│   " });
+                if !Self::build_tree_level(
+                    child,
+                    &child_prefix,
+                    depth - 1,
+                    show_hidden,
+                    budget,
+                    lines,
+                ) {
+                    return false;
+                }
+            } else {
+                lines.push(format!("{}{}{}", prefix, branch, name));
+            }
+        }
+        true
+    }
+
+    pub fn build_dir_tree(root: &Path, show_hidden: bool, max_entries: usize) -> String {
+        let root_label = root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| root.to_string_lossy().to_string());
+        let mut lines = vec![format!("{}/", root_label)];
+        let mut budget = max_entries;
+        let complete =
+            Self::build_tree_level(root, "", 2, show_hidden, &mut budget, &mut lines);
+        if !complete {
+            lines.push("... (more)".to_string());
+        }
+        lines.join("\n")
+    }
+
     pub fn update_preview(&mut self) {
         if self.preview.last_preview.elapsed() < Duration::from_millis(80) {
             return;
@@ -1259,18 +1537,8 @@ impl App {
             .map(|e| e.is_dir)
             .unwrap_or_else(|| path.is_dir())
         {
-            let count = self
-                .nav
-                .dir_child_count
-                .get(path)
-                .copied()
-                .unwrap_or_else(|| {
-                    let c = fs::read_dir(path).map(|e| e.count()).unwrap_or(0);
-                    self.nav.dir_child_count.insert(path.to_path_buf(), c);
-                    c
-                });
             self.preview.preview_content =
-                format!("Folder\n\n {}\n\n {} items", path.display(), count);
+                Self::build_dir_tree(path, self.nav.show_hidden, 200);
             return;
         }
 
@@ -1678,67 +1946,24 @@ impl App {
         self.cmd.suggestion_index = 0;
         self.cmd.suggestion_scroll = 0;
 
-        let parts: Vec<&str> = self.cmd.command_input.split_whitespace().collect();
-        if parts.len() < 2 {
-            self.cmd.command_suggestion.clear();
-            return;
-        }
+        let input = self.cmd.command_input.clone();
+        let current_word = input
+            .rsplit(char::is_whitespace)
+            .next()
+            .unwrap_or("")
+            .to_string();
+        let cwd = self.nav.current_dir.clone();
 
-        let command = parts[0];
-        let args_part = parts[1..].join(" ");
-
-        if command == ":find" {
-            if args_part.is_empty() {
-                self.cmd.command_suggestion.clear();
-                return;
-            }
-            if !self.index.is_built() && !self.index.is_building() {
-                let idx = self.index.clone();
-                let skip = self.config.indexing.skip_dirs.clone();
-                idx.ensure_built(
-                    self.nav.current_dir.clone(),
-                    skip,
-                    self.index_tx.clone(),
-                );
-            }
-            if !self.index.is_built() {
-                self.cmd.command_suggestion.clear();
-                return;
-            }
-            let mut combined = self.nav.current_dir.to_string_lossy().to_lowercase().replace('\\', "/");
-            if !combined.ends_with('/') {
-                combined.push('/');
-            }
-            let query_norm = args_part.to_lowercase().replace('\\', "/");
-            combined.push_str(&query_norm);
-            let results = self.index.find_completions(combined.as_bytes(), 50);
-            self.cmd.command_suggestion = results;
-            return;
+        let ctx = crate::suggestions::SuggestionContext {
+            input: &input,
+            current_word: &current_word,
+            cwd: &cwd,
+        };
+        let mut results = Vec::new();
+        for provider in &mut self.cmd.suggestion_providers {
+            results.extend(provider.suggestions(&ctx));
         }
-
-        self.cmd.command_suggestion.clear();
-        if command != "cd" && command != "cp" && command != "mv" && command != "rm" {
-            return;
-        }
-
-        let args_lower = args_part.to_lowercase();
-        for path in &self.nav.files {
-            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                if name.to_lowercase().starts_with(&args_lower) {
-                    let is_dir = self
-                        .nav
-                        .dir_cache
-                        .get(path)
-                        .map(|e| e.is_dir)
-                        .unwrap_or(false);
-                    self.cmd.command_suggestion.push(if is_dir {
-                        format!("{}/", name)
-                    } else {
-                        name.to_string()
-                    });
-                }
-            }
-        }
+        self.cmd.command_suggestion = results;
     }
 
     pub fn calculate_disk_usage(&mut self) {
@@ -1935,6 +2160,23 @@ impl App {
                             return;
                         }
                     }
+                    if crate::fdsearch::available() {
+                        let results = crate::fdsearch::search(
+                            &self.nav.current_dir,
+                            &query,
+                            self.nav.show_hidden,
+                            &self.config.indexing.skip_dirs,
+                            50,
+                        );
+                        let count = results.as_ref().map(|r| r.len()).unwrap_or(0);
+                        self.search.search_query = query.clone();
+                        self.nav.files = results.unwrap_or_default();
+                        self.nav.cursor_index = 0;
+                        self.mode = AppMode::Search;
+                        self.cmd.command_suggestion.clear();
+                        self.set_status(format!("Found {} result(s) for '{}' (fd)", count, query));
+                        return;
+                    }
                     if !self.index.is_built() && !self.index.is_building() {
                         let idx = self.index.clone();
                         let skip = self.config.indexing.skip_dirs.clone();
@@ -1963,5 +2205,34 @@ impl App {
         }
         self.cmd.command_input.clear();
         self.refresh_files();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dir_tree_depth2_respects_hidden() {
+        let tmp = std::env::temp_dir().join("texp_tree_test");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("a/b")).unwrap();
+        fs::create_dir_all(tmp.join("c")).unwrap();
+        fs::write(tmp.join("f.txt"), "x").unwrap();
+        fs::write(tmp.join(".hidden"), "x").unwrap();
+
+        let tree = App::build_dir_tree(&tmp, false, 100);
+        assert!(tree.starts_with("texp_tree_test/"));
+        assert!(tree.contains("├── a/\n│   └── b/"));
+        assert!(tree.contains("├── c/\n└── f.txt"));
+        assert!(!tree.contains(".hidden"));
+
+        let tree_shown = App::build_dir_tree(&tmp, true, 100);
+        assert!(tree_shown.contains(".hidden"));
+
+        let truncated = App::build_dir_tree(&tmp, false, 1);
+        assert!(truncated.contains("... (more)"));
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }
