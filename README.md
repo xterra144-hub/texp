@@ -8,6 +8,7 @@ Built with `ratatui` + `crossterm` for the TUI and `ignore` for filesystem trave
 
 ![Screenshot 1](screenshots/image_2026-07-26_11-38-55.png)
 ![Screenshot 2](screenshots/image_2026-07-26_11-39-27.png)
+![Screenshot 3](screenshots/Screenshot%20from%202026-08-29%2011-43-25.png)
 
 ## Architecture
 
