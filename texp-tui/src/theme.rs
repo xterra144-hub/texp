@@ -525,6 +525,39 @@ impl Default for FileInfoTheme {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct PromptTheme {
+    #[serde(default = "default_prompt_border_fg")]
+    pub border_fg: ThemeColor,
+    #[serde(default = "default_prompt_border_modifier")]
+    pub border_modifier: ThemeModifier,
+    #[serde(default = "default_prompt_title_fg")]
+    pub title_fg: ThemeColor,
+    #[serde(default = "default_prompt_title_modifier")]
+    pub title_modifier: ThemeModifier,
+    #[serde(default = "default_prompt_hint_fg")]
+    pub hint_fg: ThemeColor,
+}
+fn default_prompt_border_fg() -> ThemeColor { ThemeColor::rgb(115, 218, 202) }
+fn default_prompt_border_modifier() -> ThemeModifier { ThemeModifier(Modifier::BOLD) }
+fn default_prompt_title_fg() -> ThemeColor { ThemeColor::rgb(224, 175, 104) }
+fn default_prompt_title_modifier() -> ThemeModifier { ThemeModifier(Modifier::BOLD) }
+fn default_prompt_hint_fg() -> ThemeColor { ThemeColor::rgb(86, 95, 137) }
+
+impl Default for PromptTheme {
+    fn default() -> Self {
+        Self {
+            border_fg: default_prompt_border_fg(),
+            border_modifier: default_prompt_border_modifier(),
+            title_fg: default_prompt_title_fg(),
+            title_modifier: default_prompt_title_modifier(),
+            hint_fg: default_prompt_hint_fg(),
+        }
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct StatusBarTheme {
     #[serde(default = "default_sb_normal_fg")]
     pub normal_fg: ThemeColor,
@@ -821,6 +854,8 @@ pub struct Theme {
     #[serde(default)]
     pub file_info: FileInfoTheme,
     #[serde(default)]
+    pub prompt: PromptTheme,
+    #[serde(default)]
     pub status_bar: StatusBarTheme,
     #[serde(default)]
     pub markdown: MarkdownTheme,
@@ -844,6 +879,7 @@ impl Default for Theme {
             disk_usage: DiskUsageTheme::default(),
             help: HelpTheme::default(),
             file_info: FileInfoTheme::default(),
+            prompt: PromptTheme::default(),
             status_bar: StatusBarTheme::default(),
             markdown: MarkdownTheme::default(),
             grep_hint: GrepHintTheme::default(),

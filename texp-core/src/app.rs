@@ -33,6 +33,7 @@ pub enum AppMode {
     FileInfo,
     Action,
     OpenWith,
+    CreatePrompt,
 }
 pub fn editor_line_starts(buf: &str) -> Vec<usize> {
     let mut starts = vec![0];
@@ -111,6 +112,7 @@ pub struct App {
     pub action: ActionState,
     pub open_with: OpenWithState,
     pub clipboard: FileClipboardState,
+    pub create_prompt: CreatePromptState,
 }
 
 impl Drop for App {
@@ -165,6 +167,7 @@ impl App {
             action: ActionState::new(),
             open_with: OpenWithState::new(),
             clipboard: FileClipboardState::new(),
+            create_prompt: CreatePromptState::new(),
         };
 
         app.nav.history = vec![cwd];
@@ -227,6 +230,7 @@ impl App {
             FileInfo => self.handle_file_info(event),
             Action => self.handle_action(event),
             OpenWith => self.handle_open_with(event),
+            CreatePrompt => self.handle_create_prompt(event),
         }
     }
 
@@ -236,10 +240,25 @@ impl App {
                 if !self.nav.filter_input.is_empty() {
                     self.nav.filter_input.clear();
                     self.apply_filter();
+                } else if self.nav.filter_active {
+                    self.nav.filter_active = false;
                 }
             }
             AppEvent::Delete => {
                 self.mode = AppMode::ConfirmDelete
+            }
+            AppEvent::Char('d') => {
+                self.mode = AppMode::ConfirmDelete;
+            }
+            AppEvent::Char('c') => {
+                self.copy_to_clipboard();
+            }
+            AppEvent::Char('x') => {
+                self.cut_to_clipboard();
+            }
+            AppEvent::Char('a') => {
+                self.create_prompt.choice = 0;
+                self.mode = AppMode::CreatePrompt;
             }
             AppEvent::Char('q') => {
                 if self.editor.editor_modified {
@@ -288,10 +307,10 @@ impl App {
                 }
             }
             AppEvent::Backspace => {
-                if !self.nav.filter_input.is_empty() {
+                if self.nav.filter_active && !self.nav.filter_input.is_empty() {
                     self.nav.filter_input.pop();
                     self.apply_filter();
-                } else {
+                } else if !self.nav.filter_active {
                     let parent = self.nav.current_dir.parent().and_then(|p| {
                         let b = p.to_path_buf();
                         if b == self.nav.current_dir { None } else { Some(b) }
@@ -393,15 +412,22 @@ impl App {
             AppEvent::Ctrl('v') => {
                 self.paste_files();
             }
-            AppEvent::Char(c) => {
-                if let Some((done, total)) = self.save_progress {
-                    if done == total {
-                        self.save_progress = None;
-                        return Some(());
-                    }
-                }
-                self.nav.filter_input.push(*c);
+            AppEvent::Char('/') => {
+                self.nav.filter_active = true;
+                self.nav.filter_input.clear();
                 self.apply_filter();
+            }
+            AppEvent::Char(c) => {
+                if self.nav.filter_active {
+                    if let Some((done, total)) = self.save_progress {
+                        if done == total {
+                            self.save_progress = None;
+                            return Some(());
+                        }
+                    }
+                    self.nav.filter_input.push(*c);
+                    self.apply_filter();
+                }
             }
             AppEvent::DropFile { source, dest } => {
                 let _ = std::fs::copy(source, dest);
@@ -1085,6 +1111,32 @@ impl App {
             }
             AppEvent::Char('n') | AppEvent::Char('N') | AppEvent::Escape => {
                 self.mode = AppMode::Normal;
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn handle_create_prompt(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape => {
+                self.mode = AppMode::Normal;
+            }
+            AppEvent::Up | AppEvent::Char('k') => {
+                self.create_prompt.choice = 0;
+            }
+            AppEvent::Down | AppEvent::Char('j') => {
+                self.create_prompt.choice = 1;
+            }
+            AppEvent::Enter => {
+                let cmd = if self.create_prompt.choice == 0 {
+                    ":touch "
+                } else {
+                    ":mkdir "
+                };
+                self.mode = AppMode::Command;
+                self.cmd.command_input = cmd.to_string();
+                self.update_suggestion();
             }
             _ => {}
         }

@@ -42,6 +42,7 @@ pub struct NavState {
     pub history_pos: usize,
     pub last_dir_refresh: HashMap<PathBuf, Instant>,
     pub show_hidden: bool,
+    pub filter_active: bool,
 }
 
 impl NavState {
@@ -63,6 +64,7 @@ impl NavState {
             history_pos: 0,
             last_dir_refresh: HashMap::new(),
             show_hidden: false,
+            filter_active: false,
         }
     }
 }
@@ -216,6 +218,16 @@ pub struct FileClipboardState {
 impl FileClipboardState {
     pub fn new() -> Self {
         Self { mode: ClipboardMode::Copy, paths: Vec::new() }
+    }
+}
+
+pub struct CreatePromptState {
+    pub choice: usize,
+}
+
+impl CreatePromptState {
+    pub fn new() -> Self {
+        Self { choice: 0 }
     }
 }
 

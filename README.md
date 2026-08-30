@@ -91,6 +91,7 @@ Navigate with arrow keys. Press `:` to enter command mode. Press `q` or `Esc` to
 | **Editor** | Text editor with line numbers — Ctrl+S save, Ctrl+X/C cut/copy, Esc auto-save & exit |
 | **ConfirmDelete** | Confirmation dialog — `y` to confirm, `n`/Esc to cancel |
 | **FileInfo** | File properties popup — Ctrl+C copy path, Esc/q close |
+| **CreatePrompt** | Create file/directory — ↑/↓ select type, Enter confirm, Esc cancel |
 
 ### Keybindings
 
@@ -98,8 +99,13 @@ Navigate with arrow keys. Press `:` to enter command mode. Press `q` or `Esc` to
 |---|---|---|
 | `↑` / `↓` | Normal | Move cursor |
 | `Enter` | Normal | Enter directory / open file |
-| `Backspace` | Normal | Go to parent directory / delete filter char |
+| `Backspace` | Normal | Go to parent directory / delete filter char (when filter active) |
 | `Space` | Normal | Toggle file selection |
+| `/` | Normal | Enable filter mode (type to filter files) |
+| `d` | Normal | Delete selected (confirm) |
+| `c` | Normal | Copy to clipboard |
+| `x` | Normal | Cut to clipboard |
+| `a` | Normal | Create new file or directory |
 | `b` | Normal | Toggle bookmark for current file/dir |
 | `B` | Normal | Show bookmarks popup |
 | `s` | Normal | Cycle sort mode (name, date, size, type) |
@@ -112,6 +118,10 @@ Navigate with arrow keys. Press `:` to enter command mode. Press `q` or `Esc` to
 | `Ctrl+Y` | Normal | Show file properties popup |
 | `Ctrl+B` | Any | Jump to breadcrumbs navigation |
 | `Alt+Left` / `Alt+Right` | Normal | Navigate back/forward in history |
+| `Esc` | Normal | Exit filter mode (when active) |
+| `↑/↓` / `j/k` | CreatePrompt | Select file or directory |
+| `Enter` | CreatePrompt | Confirm selection (opens command mode) |
+| `Esc` | CreatePrompt | Cancel |
 | `Esc` | Command | Exit command mode |
 | `Enter` | Command | Execute command |
 | `Enter` | Command | Substitute highlighted snippet / execute command |

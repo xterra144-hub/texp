@@ -1,6 +1,6 @@
 use crate::kitty_preview::PreviewModule;
 use crate::markdown_parser::markdown_parser;
-use crate::theme::{AppearanceConfig, Icons};
+use crate::theme::{AppearanceConfig, Icons, PromptTheme};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
@@ -9,6 +9,51 @@ use std::fs;
 use std::time::Duration;
 use texp_core::app::{App, AppMode, editor_line_starts};
 use texp_core::state::*;
+
+fn render_prompt_frame(
+    f: &mut Frame,
+    full_area: Rect,
+    title: &str,
+    width_pct: u16,
+    height_pct: u16,
+    theme: &PromptTheme,
+) -> Rect {
+    let v_margin = (100 - height_pct) / 2;
+    let h_margin = (100 - width_pct) / 2;
+    let popup = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(v_margin),
+            Constraint::Percentage(height_pct),
+            Constraint::Percentage(v_margin),
+        ])
+        .split(full_area);
+    let area = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(h_margin),
+            Constraint::Percentage(width_pct),
+            Constraint::Percentage(h_margin),
+        ])
+        .split(popup[1])[1];
+    f.render_widget(Clear, area);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(
+            Style::default()
+                .fg(theme.border_fg.0)
+                .add_modifier(theme.border_modifier.0),
+        )
+        .title(Span::styled(
+            title,
+            Style::default()
+                .fg(theme.title_fg.0)
+                .add_modifier(theme.title_modifier.0),
+        ));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    inner
+}
 
 pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview: &mut PreviewModule) {
     let theme = &appearance.theme;
@@ -253,30 +298,13 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
         f.render_widget(suggestion_block, chunks[1]);
     }
     if app.mode == AppMode::BookMarks {
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage((100 - 60) / 2),
-                Constraint::Percentage(60),
-                Constraint::Percentage((100 - 60) / 2),
-            ])
-            .split(f.area());
-        let area = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage((100 - 70) / 2),
-                Constraint::Percentage(70),
-                Constraint::Percentage((100 - 70) / 2),
-            ])
-            .split(popup_layout[1])[1];
-        f.render_widget(Clear, area);
-
+        let area = render_prompt_frame(f, f.area(), " BOOKMARKS ", 70, 60, &theme.prompt);
         let mut bookmark_items = Vec::new();
         if app.bookmarks.bookmarks.is_empty() {
             bookmark_items.push(ListItem::new(""));
             bookmark_items.push(
                 ListItem::new(" Bookmark list is empty!")
-                    .style(Style::default().fg(theme.bookmarks.empty_fg.0).add_modifier(theme.bookmarks.empty_modifier.0)),
+                    .style(Style::default().fg(theme.prompt.hint_fg.0)),
             );
             bookmark_items.push(ListItem::new(""));
             bookmark_items.push(ListItem::new("  How to add a bookmark:"));
@@ -297,50 +325,19 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             }
         }
 
-        let bookmark_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(
-                Style::default()
-                    .fg(theme.bookmarks.border_fg.0)
-                    .add_modifier(theme.bookmarks.border_modifier.0),
-            )
-            .title(Span::styled(
-                " BOOKMARKS ",
-                Style::default()
-                    .fg(theme.bookmarks.title_fg.0)
-                    .add_modifier(theme.bookmarks.title_modifier.0),
-            ));
         let mut bm_state = ratatui::widgets::ListState::default();
         bm_state.select(Some(app.bookmarks.bookmark_cursor));
         let bookmark_list = List::new(bookmark_items)
-            .block(bookmark_block)
             .highlight_style(
                 Style::default()
-                    .bg(theme.bookmarks.highlight_bg.0)
-                    .fg(theme.bookmarks.highlight_fg.0)
-                    .add_modifier(theme.bookmarks.highlight_modifier.0),
+                    .bg(theme.prompt.title_fg.0)
+                    .fg(theme.prompt.border_fg.0)
+                    .add_modifier(Modifier::BOLD),
             );
         f.render_stateful_widget(bookmark_list, area, &mut bm_state);
     }
     if app.mode == AppMode::GrepResults {
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(10),
-                Constraint::Percentage(80),
-                Constraint::Percentage(10),
-            ])
-            .split(f.area());
-        let area = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(5),
-                Constraint::Percentage(90),
-                Constraint::Percentage(5),
-            ])
-            .split(popup_layout[1])[1];
-        f.render_widget(Clear, area);
-
+        let area = render_prompt_frame(f, f.area(), " GREP RESULTS ", 90, 80, &theme.prompt);
         let mut grep_items = Vec::new();
         if app.grep.grep_matches.is_empty() {
             grep_items.push(ListItem::new("No matches found."));
@@ -367,26 +364,13 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             }
         }
 
-        let grep_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(
-                Style::default()
-                    .fg(theme.grep_results.border_fg.0)
-                    .add_modifier(theme.grep_results.border_modifier.0),
-            )
-            .title(Span::styled(
-                " GREP RESULTS ",
-                Style::default()
-                    .fg(theme.grep_results.title_fg.0)
-                    .add_modifier(theme.grep_results.title_modifier.0),
-            ));
         let mut grep_state = ratatui::widgets::ListState::default();
         grep_state.select(Some(app.grep.grep_cursor));
-        let grep_list = List::new(grep_items).block(grep_block).highlight_style(
+        let grep_list = List::new(grep_items).highlight_style(
             Style::default()
-                .bg(theme.grep_results.highlight_bg.0)
-                .fg(theme.grep_results.highlight_fg.0)
-                .add_modifier(theme.grep_results.highlight_modifier.0),
+                .bg(theme.prompt.title_fg.0)
+                .fg(theme.prompt.border_fg.0)
+                .add_modifier(Modifier::BOLD),
         );
         f.render_stateful_widget(grep_list, area, &mut grep_state);
     }
@@ -604,29 +588,12 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
         f.render_widget(List::new(list_items).block(block), area);
     }
     if app.mode == AppMode::Help {
-        let popup_layout = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(5),
-                Constraint::Percentage(90),
-                Constraint::Percentage(5),
-            ])
-            .split(f.area());
-        let area = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(10),
-                Constraint::Percentage(80),
-                Constraint::Percentage(10),
-            ])
-            .split(popup_layout[1])[1];
-        f.render_widget(Clear, area);
         let help_lines: Vec<Line> = vec![
             Line::from(Span::styled(
                 " KEYBINDINGS ",
                 Style::default()
-                    .fg(theme.help.section_fg.0)
-                    .add_modifier(theme.help.section_modifier.0),
+                    .fg(theme.prompt.title_fg.0)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(" ↑/↓           Navigate files"),
@@ -634,6 +601,11 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             Line::from(" Backspace      Parent directory / delete filter char"),
             Line::from(" Esc            Clear filter / back to normal"),
             Line::from(" Space          Toggle selection"),
+            Line::from(" /              Enable filter mode"),
+            Line::from(" d              Delete selected (confirm)"),
+            Line::from(" c              Copy to clipboard"),
+            Line::from(" x              Cut to clipboard"),
+            Line::from(" a              Create new file or directory"),
             Line::from(" :              Command mode"),
             Line::from(" b              Toggle bookmark"),
             Line::from(" B              Bookmarks list"),
@@ -649,13 +621,12 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             Line::from(" Ctrl+Y         File properties"),
             Line::from(" Ctrl+C         Copy path to clipboard (in properties)"),
             Line::from(" Alt+Left/Right History back/forward"),
-            Line::from(" Type chars     Quick filter file list"),
             Line::from(""),
             Line::from(Span::styled(
                 " EDITOR CONTROLS",
                 Style::default()
-                    .fg(theme.help.section_fg.0)
-                    .add_modifier(theme.help.section_modifier.0),
+                    .fg(theme.prompt.title_fg.0)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(" Ctrl+S         Save"),
@@ -668,8 +639,8 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             Line::from(Span::styled(
                 " COMMANDS (:)",
                 Style::default()
-                    .fg(theme.help.section_fg.0)
-                    .add_modifier(theme.help.section_modifier.0),
+                    .fg(theme.prompt.title_fg.0)
+                    .add_modifier(Modifier::BOLD),
             )),
             Line::from(""),
             Line::from(" :cd <path>     Change directory"),
@@ -685,51 +656,23 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             Line::from(" :index         Rebuild file index"),
             Line::from(" :q             Quit"),
         ];
-        let visible_height = area.height.saturating_sub(2) as usize;
         let total = help_lines.len();
+        let title = if total > 40 {
+            format!(" HELP ({}/{}) ", total.min(app.help_scroll + 40), total)
+        } else {
+            " HELP ".to_string()
+        };
+        let area = render_prompt_frame(f, f.area(), &title, 80, 90, &theme.prompt);
+        let visible_height = area.height.saturating_sub(2) as usize;
         if app.help_scroll + visible_height > total && total > visible_height {
             app.help_scroll = total - visible_height;
         }
         let end = std::cmp::min(app.help_scroll + visible_height, total);
         let visible: Vec<Line> = help_lines[app.help_scroll..end].to_vec();
-        let title = if total > visible_height {
-            format!(
-                " HELP ({}/{}) ",
-                (app.help_scroll + visible_height).min(total),
-                total
-            )
-        } else {
-            " HELP ".to_string()
-        };
-        let help_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.help.border_fg.0))
-            .title(Span::styled(
-                title,
-                Style::default()
-                    .fg(theme.help.title_fg.0)
-                    .add_modifier(theme.help.title_modifier.0),
-            ));
-        f.render_widget(Paragraph::new(visible).block(help_block), area);
+        f.render_widget(Paragraph::new(visible), area);
     }
     if app.mode == AppMode::FileInfo {
-        let popup = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(25),
-                Constraint::Percentage(50),
-                Constraint::Percentage(25),
-            ])
-            .split(f.area())[1];
-        let area = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(20),
-                Constraint::Percentage(60),
-                Constraint::Percentage(20),
-            ])
-            .split(popup)[1];
-        f.render_widget(Clear, area);
+        let area = render_prompt_frame(f, f.area(), " FILE PROPERTIES ", 60, 50, &theme.prompt);
         let path = match app.nav.files.get(app.nav.cursor_index) {
             Some(p) => p,
             None => {
@@ -767,11 +710,6 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
                     31,
                     30,
                     31,
-                    31,
-                    30,
-                    31,
-                    30,
-                    31,
                 ];
                 let mut m = 0;
                 let mut d = remaining;
@@ -789,13 +727,8 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
         let kind = if is_dir { "Directory" } else { "File" };
         let full = path.to_string_lossy();
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("-");
+        let hint_style = Style::default().fg(theme.prompt.hint_fg.0);
         let info_lines = vec![
-            Line::from(Span::styled(
-                " FILE PROPERTIES ",
-                Style::default()
-                    .fg(theme.file_info.title_fg.0)
-                    .add_modifier(theme.file_info.title_modifier.0),
-            )),
             Line::from(""),
             Line::from(format!(" Name:     {}", name)),
             Line::from(format!(" Path:     {}", full)),
@@ -805,13 +738,59 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             Line::from(""),
             Line::from(Span::styled(
                 " [Esc/q] Close  [Ctrl+C] Copy path ",
-                Style::default().fg(theme.file_info.hint_fg.0),
+                hint_style,
             )),
         ];
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.file_info.border_fg.0));
-        f.render_widget(Paragraph::new(info_lines).block(block), area);
+        f.render_widget(Paragraph::new(info_lines), area);
+    }
+    if app.mode == AppMode::CreatePrompt {
+        let area = render_prompt_frame(f, f.area(), " CREATE ", 50, 30, &theme.prompt);
+        let file_style = if app.create_prompt.choice == 0 {
+            Style::default()
+                .fg(theme.prompt.title_fg.0)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.prompt.hint_fg.0)
+        };
+        let dir_style = if app.create_prompt.choice == 1 {
+            Style::default()
+                .fg(theme.prompt.title_fg.0)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.prompt.hint_fg.0)
+        };
+        let lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled("📄", Style::default()),
+                Span::styled(" [f] File", file_style),
+            ]),
+            Line::from(vec![
+                Span::styled("  ", Style::default()),
+                Span::styled("📁", Style::default()),
+                Span::styled(" [d] Directory", dir_style),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                " [↑/↓] Select  [Enter] Confirm  [Esc] Cancel ",
+                Style::default().fg(theme.prompt.hint_fg.0),
+            )),
+        ];
+        f.render_widget(Paragraph::new(lines), area);
+    }
+    if app.mode == AppMode::ConfirmDelete {
+        let area = render_prompt_frame(f, f.area(), " DELETE ", 50, 25, &theme.prompt);
+        let lines = vec![
+            Line::from(""),
+            Line::from(" Are you sure you want to delete?"),
+            Line::from(""),
+            Line::from(Span::styled(
+                " [y] Yes   [n/Esc] No ",
+                Style::default().fg(theme.prompt.hint_fg.0),
+            )),
+        ];
+        f.render_widget(Paragraph::new(lines), area);
     }
     let sb = &theme.status_bar;
     let bottom_bar = if let Some((done, total)) = app.save_progress {
@@ -878,8 +857,12 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
                                 },
                         }
                     );
-                    let filter_display = if !app.nav.filter_input.is_empty() {
-                        format!(" [Filter: {}]", app.nav.filter_input)
+                    let filter_display = if app.nav.filter_active {
+                        if app.nav.filter_input.is_empty() {
+                            " [Filter: ]".to_string()
+                        } else {
+                            format!(" [Filter: {}]", app.nav.filter_input)
+                        }
                     } else {
                         String::new()
                     };
@@ -970,9 +953,8 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             AppMode::ConfirmDelete => Paragraph::new(" Confirm delete: [y] Yes | [n/Esc] No")
                 .style(
                     Style::default()
-                        .fg(sb.confirm_delete_fg.0)
-                        .bg(sb.confirm_delete_bg.0)
-                        .add_modifier(sb.confirm_delete_modifier.0),
+                        .fg(sb.normal_fg.0)
+                        .bg(sb.normal_bg.0),
                 ),
             AppMode::Viewer => {
                 Paragraph::new(" [↑/↓/PgUp/PgDn] Scroll | [e/i] Edit | [v/Esc/q] Close")
@@ -998,6 +980,8 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
                 .style(Style::default().fg(sb.open_with_fg.0).bg(sb.open_with_bg.0)),
             AppMode::Help => Paragraph::new(" [↑/↓/PgUp/PgDn] Scroll | [Esc/q/F1] Close")
                 .style(Style::default().fg(sb.help_fg.0).bg(sb.help_bg.0)),
+            AppMode::CreatePrompt => Paragraph::new(" [↑/↓] Select  [Enter] Confirm  [Esc] Cancel")
+                .style(Style::default().fg(sb.file_info_fg.0).bg(sb.file_info_bg.0)),
         }
     };
     f.render_widget(bottom_bar, chunks[3]);
