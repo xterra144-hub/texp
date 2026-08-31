@@ -235,14 +235,69 @@ impl App {
     }
 
     fn handle_normal(&mut self, event: &AppEvent) -> Option<()> {
-        match event {
-            AppEvent::Escape => {
-                if !self.nav.filter_input.is_empty() {
+        if self.nav.filter_active {
+            return match event {
+                AppEvent::Escape => {
+                    if !self.nav.filter_input.is_empty() {
+                        self.nav.filter_input.clear();
+                        self.apply_filter();
+                    } else {
+                        self.nav.filter_active = false;
+                    }
+                    None
+                }
+                AppEvent::Backspace => {
+                    if !self.nav.filter_input.is_empty() {
+                        self.nav.filter_input.pop();
+                        self.apply_filter();
+                    }
+                    None
+                }
+                AppEvent::Char('/') => {
+                    self.nav.filter_active = false;
                     self.nav.filter_input.clear();
                     self.apply_filter();
-                } else if self.nav.filter_active {
-                    self.nav.filter_active = false;
+                    None
                 }
+                AppEvent::Char(c) => {
+                    self.nav.filter_input.push(*c);
+                    self.apply_filter();
+                    None
+                }
+                AppEvent::Ctrl(c) => {
+                    self.nav.filter_input.push('^');
+                    self.nav.filter_input.push(*c);
+                    self.apply_filter();
+                    None
+                }
+                AppEvent::Delete => {
+                    self.nav.filter_input.push_str("<del>");
+                    self.apply_filter();
+                    None
+                }
+                AppEvent::Enter => {
+                    if !self.nav.files.is_empty() {
+                        let target = self.nav.files[self.nav.cursor_index].clone();
+                        let is_dir = target.is_dir()
+                            || self.nav.dir_cache.get(&target).map(|e| e.is_dir).unwrap_or(false);
+                        if is_dir {
+                            self.nav.filter_active = false;
+                            self.nav.filter_input.clear();
+                            self.push_history();
+                            self.nav.current_dir = target;
+                            self.nav.cursor_index = 0;
+                            self.refresh_files();
+                        }
+                    }
+                    None
+                }
+                _ => None,
+            };
+        }
+
+        match event {
+            AppEvent::Escape => {
+                self.nav.filter_active = false;
             }
             AppEvent::Delete => {
                 self.mode = AppMode::ConfirmDelete
@@ -307,20 +362,15 @@ impl App {
                 }
             }
             AppEvent::Backspace => {
-                if self.nav.filter_active && !self.nav.filter_input.is_empty() {
-                    self.nav.filter_input.pop();
-                    self.apply_filter();
-                } else if !self.nav.filter_active {
-                    let parent = self.nav.current_dir.parent().and_then(|p| {
-                        let b = p.to_path_buf();
-                        if b == self.nav.current_dir { None } else { Some(b) }
-                    }).unwrap_or(self.nav.current_dir.clone());
-                    if parent != self.nav.current_dir {
-                        self.push_history();
-                        self.nav.current_dir = parent;
-                        self.nav.cursor_index = 0;
-                        self.refresh_files();
-                    }
+                let parent = self.nav.current_dir.parent().and_then(|p| {
+                    let b = p.to_path_buf();
+                    if b == self.nav.current_dir { None } else { Some(b) }
+                }).unwrap_or(self.nav.current_dir.clone());
+                if parent != self.nav.current_dir {
+                    self.push_history();
+                    self.nav.current_dir = parent;
+                    self.nav.cursor_index = 0;
+                    self.refresh_files();
                 }
             }
             AppEvent::Char(':') => {
@@ -418,16 +468,13 @@ impl App {
                 self.apply_filter();
             }
             AppEvent::Char(c) => {
-                if self.nav.filter_active {
-                    if let Some((done, total)) = self.save_progress {
-                        if done == total {
-                            self.save_progress = None;
-                            return Some(());
-                        }
+                if let Some((done, total)) = self.save_progress {
+                    if done == total {
+                        self.save_progress = None;
+                        return Some(());
                     }
-                    self.nav.filter_input.push(*c);
-                    self.apply_filter();
                 }
+                let _ = c;
             }
             AppEvent::DropFile { source, dest } => {
                 let _ = std::fs::copy(source, dest);

@@ -4,7 +4,7 @@ use std::sync::OnceLock;
 
 static FD_AVAILABLE: OnceLock<bool> = OnceLock::new();
 
-/// Check (once) whether the `fd` binary is on PATH.
+/// проверка установлен ли fd в path 
 pub fn available() -> bool {
     *FD_AVAILABLE.get_or_init(|| {
         Command::new("fd")
@@ -15,15 +15,10 @@ pub fn available() -> bool {
     })
 }
 
+
 /// Search file names under `root` with fd. Returns `None` when fd is not
 /// installed so the caller can fall back to the built-in index.
-pub fn search(
-    root: &Path,
-    query: &str,
-    show_hidden: bool,
-    skip_dirs: &[String],
-    limit: usize,
-) -> Option<Vec<PathBuf>> {
+pub fn search(root: &Path, query: &str, show_hidden: bool, skip_dirs: &[String], limit: usize) -> Option<Vec<PathBuf>> {
     if !available() {
         return None;
     }
