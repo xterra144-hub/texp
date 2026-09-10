@@ -10,14 +10,7 @@ use std::time::Duration;
 use texp_core::app::{App, AppMode, editor_line_starts};
 use texp_core::state::*;
 
-fn render_prompt_frame(
-    f: &mut Frame,
-    full_area: Rect,
-    title: &str,
-    width_pct: u16,
-    height_pct: u16,
-    theme: &PromptTheme,
-) -> Rect {
+fn render_prompt_frame(f: &mut Frame, full_area: Rect, title: &str, width_pct: u16, height_pct: u16, theme: &PromptTheme) -> Rect {
     let v_margin = (100 - height_pct) / 2;
     let h_margin = (100 - width_pct) / 2;
     let popup = Layout::default()
@@ -709,6 +702,11 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
                     30,
                     31,
                     30,
+                    31,
+                    31, 
+                    30, 
+                    31, 
+                    30, 
                     31,
                 ];
                 let mut m = 0;

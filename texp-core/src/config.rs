@@ -1,6 +1,5 @@
 use serde::Deserialize;
 use std::path::PathBuf;
-
 fn data_dir() -> PathBuf {
     dirs::config_dir()
         .map(|d| d.join("texp").join(".texp"))
