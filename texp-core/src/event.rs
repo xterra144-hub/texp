@@ -17,6 +17,8 @@ pub enum AppEvent {
     PageDown,
     Char(char),
     Ctrl(char),
+    Alt(char),
+    ShiftDigit(u8),
     AltLeft,
     AltRight,
     CtrlShiftLeft,

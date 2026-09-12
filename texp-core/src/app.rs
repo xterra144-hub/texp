@@ -34,6 +34,7 @@ pub enum AppMode {
     Action,
     OpenWith,
     CreatePrompt,
+    TabList,
 }
 pub fn editor_line_starts(buf: &str) -> Vec<usize> {
     let mut starts = vec![0];
@@ -113,6 +114,9 @@ pub struct App {
     pub open_with: OpenWithState,
     pub clipboard: FileClipboardState,
     pub create_prompt: CreatePromptState,
+    pub tabs: Vec<Tab>,
+    pub active_tab: usize,
+    pub tab_list_cursor: usize,
 }
 
 impl Drop for App {
@@ -123,6 +127,21 @@ impl Drop for App {
 
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp"];
 const MAX_PDF_CACHE: usize = 50;
+
+fn shift_digit_char(n: u8) -> Option<char> {
+    Some(match n {
+        1 => '!',
+        2 => '@',
+        3 => '#',
+        4 => '$',
+        5 => '%',
+        6 => '^',
+        7 => '&',
+        8 => '*',
+        9 => '(',
+        _ => return None,
+    })
+}
 
 impl App {
     pub fn new() -> Self {
@@ -168,6 +187,9 @@ impl App {
             open_with: OpenWithState::new(),
             clipboard: FileClipboardState::new(),
             create_prompt: CreatePromptState::new(),
+            tabs: vec![Tab::new(cwd.clone(), true)],
+            active_tab: 0,
+            tab_list_cursor: 0,
         };
 
         app.nav.history = vec![cwd];
@@ -214,6 +236,54 @@ impl App {
             self.nav.path_cursor = self.nav.path_segments.len().saturating_sub(1);
             return None;
         }
+        {
+            let safe = !self.nav.filter_active
+                && matches!(
+                    self.mode,
+                    Normal
+                        | Search
+                        | DiskUsage
+                        | GrepResults
+                        | BookMarks
+                        | Breadcrumbs
+                        | Help
+                        | FileInfo
+                        | Action
+                        | OpenWith
+                        | CreatePrompt
+                        | Viewer
+                );
+            if safe {
+                match event {
+                    AppEvent::Ctrl('t') => {
+                        self.new_tab();
+                        self.mode = Normal;
+                        return None;
+                    }
+                    AppEvent::Alt('w') => {
+                        self.close_tab();
+                        self.mode = Normal;
+                        return None;
+                    }
+                    AppEvent::ShiftDigit(n) if (1..=9).contains(n) => {
+                        let idx = (*n as usize).saturating_sub(1);
+                        if idx < self.tabs.len() {
+                            self.switch_tab(idx);
+                            self.mode = Normal;
+                        }
+                        return None;
+                    }
+                    AppEvent::Alt('t') => {
+                        if self.tabs.len() > 1 {
+                            self.tab_list_cursor = self.active_tab;
+                            self.mode = AppMode::TabList;
+                        }
+                        return None;
+                    }
+                    _ => {}
+                }
+            }
+        }
         use AppMode::*;
         match self.mode {
             Normal => self.handle_normal(event),
@@ -231,6 +301,7 @@ impl App {
             Action => self.handle_action(event),
             OpenWith => self.handle_open_with(event),
             CreatePrompt => self.handle_create_prompt(event),
+            TabList => self.handle_tab_list(event),
         }
     }
 
@@ -262,6 +333,13 @@ impl App {
                 AppEvent::Char(c) => {
                     self.nav.filter_input.push(*c);
                     self.apply_filter();
+                    None
+                }
+                AppEvent::ShiftDigit(n) => {
+                    if let Some(c) = shift_digit_char(*n) {
+                        self.nav.filter_input.push(c);
+                        self.apply_filter();
+                    }
                     None
                 }
                 AppEvent::Ctrl(c) => {
@@ -611,6 +689,12 @@ impl App {
                 self.cmd.command_input.push(*c);
                 self.update_suggestion();
             }
+            AppEvent::ShiftDigit(n) => {
+                if let Some(c) = shift_digit_char(*n) {
+                    self.cmd.command_input.push(c);
+                    self.update_suggestion();
+                }
+            }
             AppEvent::Backspace => {
                 self.cmd.command_input.pop();
                 if self.cmd.command_input.is_empty() {
@@ -952,6 +1036,11 @@ impl App {
             }
             AppEvent::Tab => self.editor_insert_char('\t'),
             AppEvent::Char(c) => self.editor_insert_char(*c),
+            AppEvent::ShiftDigit(n) => {
+                if let Some(c) = shift_digit_char(*n) {
+                    self.editor_insert_char(c);
+                }
+            }
             _ => {}
         }
         None
@@ -1188,6 +1277,81 @@ impl App {
             _ => {}
         }
         None
+    }
+
+    fn handle_tab_list(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Up | AppEvent::Char('k') => {
+                if self.tab_list_cursor > 0 {
+                    self.tab_list_cursor -= 1;
+                }
+            }
+            AppEvent::Down | AppEvent::Char('j') => {
+                if self.tab_list_cursor + 1 < self.tabs.len() {
+                    self.tab_list_cursor += 1;
+                }
+            }
+            AppEvent::Enter => {
+                self.switch_tab(self.tab_list_cursor);
+                self.mode = AppMode::Normal;
+            }
+            AppEvent::Escape => {
+                self.mode = AppMode::Normal;
+            }
+            _ => {}
+        }
+        None
+    }
+
+    fn save_active_tab(&mut self) {
+        self.tabs[self.active_tab].nav = std::mem::take(&mut self.nav);
+        self.tabs[self.active_tab].preview = std::mem::take(&mut self.preview);
+    }
+
+    fn load_active_tab(&mut self) {
+        self.nav = std::mem::take(&mut self.tabs[self.active_tab].nav);
+        self.preview = std::mem::take(&mut self.tabs[self.active_tab].preview);
+        self.update_preview();
+    }
+
+    pub fn switch_tab(&mut self, idx: usize) {
+        if self.tabs.is_empty() || idx >= self.tabs.len() || idx == self.active_tab {
+            return;
+        }
+        self.save_active_tab();
+        self.active_tab = idx;
+        self.load_active_tab();
+    }
+
+    pub fn new_tab(&mut self) {
+        let cwd = self.nav.current_dir.clone();
+        let preview_visible = self.preview.preview_visible;
+        self.save_active_tab();
+        self.tabs.push(Tab::new(cwd, preview_visible));
+        self.active_tab = self.tabs.len() - 1;
+        self.nav = std::mem::take(&mut self.tabs[self.active_tab].nav);
+        self.preview = std::mem::take(&mut self.tabs[self.active_tab].preview);
+        self.nav.history = vec![self.nav.current_dir.clone()];
+        self.nav.history_pos = 0;
+        self.mode = AppMode::Normal;
+        self.refresh_files();
+        self.update_preview();
+    }
+
+    pub fn close_tab(&mut self) {
+        if self.tabs.len() <= 1 {
+            self.set_status("Cannot close the last tab");
+            self.mode = AppMode::Normal;
+            return;
+        }
+        self.tabs.remove(self.active_tab);
+        if self.active_tab >= self.tabs.len() {
+            self.active_tab = self.tabs.len() - 1;
+        }
+        self.nav = std::mem::take(&mut self.tabs[self.active_tab].nav);
+        self.preview = std::mem::take(&mut self.tabs[self.active_tab].preview);
+        self.mode = AppMode::Normal;
+        self.update_preview();
     }
 
     fn clip_paths(&self) -> Vec<PathBuf> {
@@ -2331,6 +2495,30 @@ mod tests {
 
         let truncated = App::build_dir_tree(&tmp, false, 1);
         assert!(truncated.contains("... (more)"));
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn new_tab_keeps_files() {
+        let tmp = std::env::temp_dir().join("texp_tab_test");
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
+        fs::write(tmp.join("alpha.txt"), "x").unwrap();
+        fs::write(tmp.join("beta.txt"), "y").unwrap();
+        std::env::set_current_dir(&tmp).unwrap();
+
+        let mut app = App::new();
+        assert!(!app.nav.files.is_empty(), "initial list should not be empty");
+        app.new_tab();
+        assert_eq!(app.tabs.len(), 2);
+        assert_eq!(app.active_tab, 1);
+        assert!(
+            !app.nav.files.is_empty(),
+            "new tab list should not be empty, files={:?}",
+            app.nav.files
+        );
+        assert_eq!(app.nav.current_dir, tmp);
 
         let _ = fs::remove_dir_all(&tmp);
     }

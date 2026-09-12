@@ -7,7 +7,8 @@ use crossbeam_channel::{Receiver, Sender, unbounded};
 use image::DynamicImage;
 use ratatui::{
     Frame,
-    layout::Rect,    widgets::{Block, Borders, Paragraph},
+    layout::Rect, 
+    widgets::{Block, Borders, Paragraph},
 };
 use ratatui_image::{
     Resize, StatefulImage,

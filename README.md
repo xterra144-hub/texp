@@ -30,6 +30,7 @@ This separation allows alternative frontends (GUI, web) without modifying core l
 - **Built-in file viewer** (`v`) — scrollable text viewer with line numbers, PgUp/PgDn
 - **Built-in text editor** (`e`) — line-based editor with cursor movement, word navigation, selection (Ctrl+Shift+←/→), cut/copy (Ctrl+X/C), Ctrl+S save, auto-save on Esc
 - **Breadcrumbs navigation** — clickable path segments (Up at top to enter breadcrumb mode)
+- **Tabs** — multiple directory sessions: `Ctrl+T` new tab, `Alt+W` close, `Shift+1..9` switch by number, `Alt+T` tab list popup
 - **Sort modes** — cycle with `s`, toggle ascending/descending with `S` (by name, date, size, type)
 - **Navigation history** — Alt+Left / Alt+Right to go back/forward
 - **Bookmarks** — save/load favorite directories (stored in `~/.my_fm_bookmarks`)
@@ -118,6 +119,10 @@ Navigate with arrow keys. Press `:` to enter command mode. Press `q` or `Esc` to
 | `Ctrl+Y` | Normal | Show file properties popup |
 | `Ctrl+B` | Any | Jump to breadcrumbs navigation |
 | `Alt+Left` / `Alt+Right` | Normal | Navigate back/forward in history |
+| `Ctrl+T` | Normal/overlays | New tab |
+| `Alt+W` | Normal/overlays | Close tab |
+| `Shift+1..9` | Normal/overlays | Switch to tab by number |
+| `Alt+T` | Normal/overlays | Show tab list popup |
 | `Esc` | Normal | Exit filter mode (when active) |
 | `↑/↓` / `j/k` | CreatePrompt | Select file or directory |
 | `Enter` | CreatePrompt | Confirm selection (opens command mode) |

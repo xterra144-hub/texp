@@ -39,7 +39,26 @@ fn translate_key(code: KeyCode, modifiers: KeyModifiers) -> Option<AppEvent> {
         (KeyCode::PageUp, _) => Some(AppEvent::PageUp),
         (KeyCode::PageDown, _) => Some(AppEvent::PageDown),
         (KeyCode::F(n), _) => Some(AppEvent::F(n)),
-        (KeyCode::Char(c), m) if m == KeyModifiers::CONTROL => Some(AppEvent::Ctrl(c)),
+        (KeyCode::Char(c), m) if m.contains(KeyModifiers::CONTROL) => Some(AppEvent::Ctrl(c)),
+        (KeyCode::Char(c), m) if m == KeyModifiers::ALT => Some(AppEvent::Alt(c)),
+        (KeyCode::Char(c), m)
+            if (m.contains(KeyModifiers::SHIFT) && c.is_ascii_digit())
+                || matches!(c, '!' | '@' | '#' | '$' | '%' | '^' | '&' | '*' | '(') =>
+        {
+            let n = match c {
+                '1' | '!' => 1,
+                '2' | '@' => 2,
+                '3' | '#' => 3,
+                '4' | '$' => 4,
+                '5' | '%' => 5,
+                '6' | '^' => 6,
+                '7' | '&' => 7,
+                '8' | '*' => 8,
+                '9' | '(' => 9,
+                _ => 0,
+            };
+            Some(AppEvent::ShiftDigit(n))
+        }
         (KeyCode::Char(c), _) => Some(AppEvent::Char(c)),
         _ => None,
     }

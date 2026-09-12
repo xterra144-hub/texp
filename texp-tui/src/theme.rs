@@ -199,6 +199,39 @@ impl Default for PathBarTheme {
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct TabBarTheme {
+    #[serde(default = "default_tab_active_fg")]
+    pub active_fg: ThemeColor,
+    #[serde(default = "default_tab_active_bg")]
+    pub active_bg: ThemeColor,
+    #[serde(default = "default_tab_active_modifier")]
+    pub active_modifier: ThemeModifier,
+    #[serde(default = "default_tab_inactive_fg")]
+    pub inactive_fg: ThemeColor,
+    #[serde(default = "default_tab_inactive_bg")]
+    pub inactive_bg: ThemeColor,
+}
+fn default_tab_active_fg() -> ThemeColor { ThemeColor::rgb(26, 27, 30) }
+fn default_tab_active_bg() -> ThemeColor { ThemeColor::rgb(122, 162, 247) }
+fn default_tab_active_modifier() -> ThemeModifier { ThemeModifier(Modifier::BOLD) }
+fn default_tab_inactive_fg() -> ThemeColor { ThemeColor::rgb(122, 162, 247) }
+fn default_tab_inactive_bg() -> ThemeColor { ThemeColor::rgb(42, 54, 79) }
+
+impl Default for TabBarTheme {
+    fn default() -> Self {
+        Self {
+            active_fg: default_tab_active_fg(),
+            active_bg: default_tab_active_bg(),
+            active_modifier: default_tab_active_modifier(),
+            inactive_fg: default_tab_inactive_fg(),
+            inactive_bg: default_tab_inactive_bg(),
+        }
+    }
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct FileListTheme {
     #[serde(default = "default_file_highlight_bg")]
     pub highlight_bg: ThemeColor,
@@ -631,6 +664,10 @@ pub struct StatusBarTheme {
     pub save_bg: ThemeColor,
     #[serde(default = "default_sb_save_modifier")]
     pub save_modifier: ThemeModifier,
+    #[serde(default = "default_sb_tab_list_fg")]
+    pub tab_list_fg: ThemeColor,
+    #[serde(default = "default_sb_tab_list_bg")]
+    pub tab_list_bg: ThemeColor,
 }
 fn default_sb_normal_fg() -> ThemeColor { ThemeColor::rgb(158, 206, 106) }
 fn default_sb_normal_bg() -> ThemeColor { ThemeColor::rgb(26, 27, 30) }
@@ -659,6 +696,8 @@ fn default_sb_editor_fg() -> ThemeColor { ThemeColor::rgb(26, 27, 30) }
 fn default_sb_editor_bg() -> ThemeColor { ThemeColor::rgb(224, 175, 104) }
 fn default_sb_file_info_fg() -> ThemeColor { ThemeColor::rgb(205, 210, 217) }
 fn default_sb_file_info_bg() -> ThemeColor { ThemeColor::rgb(65, 72, 104) }
+fn default_sb_tab_list_fg() -> ThemeColor { ThemeColor::rgb(26, 27, 30) }
+fn default_sb_tab_list_bg() -> ThemeColor { ThemeColor::rgb(224, 175, 104) }
 fn default_sb_help_fg() -> ThemeColor { ThemeColor::rgb(205, 210, 217) }
 fn default_sb_help_bg() -> ThemeColor { ThemeColor::rgb(65, 72, 104) }
 fn default_sb_save_fg() -> ThemeColor { ThemeColor::rgb(26, 27, 30) }
@@ -708,6 +747,8 @@ impl Default for StatusBarTheme {
             action_bg: default_sb_action_bg(),
             open_with_fg: default_sb_open_with_fg(),
             open_with_bg: default_sb_open_with_bg(),
+            tab_list_fg: default_sb_tab_list_fg(),
+            tab_list_bg: default_sb_tab_list_bg(),
         }
     }
 }
@@ -863,6 +904,8 @@ pub struct Theme {
     pub grep_hint: GrepHintTheme,
     #[serde(default)]
     pub action_menu: ActionMenuTheme,
+    #[serde(default)]
+    pub tab_bar: TabBarTheme,
 }
 
 impl Default for Theme {
@@ -884,6 +927,7 @@ impl Default for Theme {
             markdown: MarkdownTheme::default(),
             grep_hint: GrepHintTheme::default(),
             action_menu: ActionMenuTheme::default(),
+            tab_bar: TabBarTheme::default(),
         }
     }
 }

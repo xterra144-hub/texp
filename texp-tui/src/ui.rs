@@ -51,21 +51,63 @@ fn render_prompt_frame(f: &mut Frame, full_area: Rect, title: &str, width_pct: u
 pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview: &mut PreviewModule) {
     let theme = &appearance.theme;
     let icons = &appearance.icons;
+    let show_tabs = app.tabs.len() > 1;
     let snippet_height = if app.mode == AppMode::Command && !app.cmd.command_suggestion.is_empty() {
         let max_height = f.area().height.saturating_sub(6).clamp(3, 25);
         std::cmp::min(app.cmd.command_suggestion.len() as u16 + 2, max_height)
     } else {
         0
     };
+    let top_height = if show_tabs { 2 } else { 1 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),
+            Constraint::Length(top_height),
             Constraint::Length(snippet_height),
             Constraint::Min(1),
             Constraint::Length(3),
         ])
         .split(f.area());
+
+    let (path_area, tab_area) = if show_tabs {
+        let r = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(chunks[0]);
+        (r[1], r[0])
+    } else {
+        (chunks[0], Rect::default())
+    };
+
+    if show_tabs {
+        let mut tab_spans: Vec<Span> = Vec::new();
+        for (idx, tab) in app.tabs.iter().enumerate() {
+            let name = tab
+                .nav
+                .current_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| tab.nav.current_dir.to_string_lossy().to_string());
+            let label = format!(" {}:{} ", idx + 1, name);
+            let style = if idx == app.active_tab {
+                Style::default()
+                    .fg(theme.tab_bar.active_fg.0)
+                    .bg(theme.tab_bar.active_bg.0)
+                    .add_modifier(theme.tab_bar.active_modifier.0)
+            } else {
+                Style::default()
+                    .fg(theme.tab_bar.inactive_fg.0)
+                    .bg(theme.tab_bar.inactive_bg.0)
+            };
+            tab_spans.push(Span::styled(label, style));
+            tab_spans.push(Span::styled(
+                "│",
+                Style::default().fg(theme.tab_bar.inactive_fg.0),
+            ));
+        }
+        f.render_widget(Paragraph::new(Line::from(tab_spans)), tab_area);
+    }
 
     let mut path_spans = Vec::new();
     path_spans.push(Span::styled(
@@ -89,7 +131,7 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             path_spans.push(Span::raw(&icons.separator));
         }
     }
-    f.render_widget(Paragraph::new(Line::from(path_spans)), chunks[0]);
+    f.render_widget(Paragraph::new(Line::from(path_spans)), path_area);
 
     let viewport = chunks[2].height.saturating_sub(2) as usize;
     let total = app.nav.files.len();
@@ -616,6 +658,18 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             Line::from(" Alt+Left/Right History back/forward"),
             Line::from(""),
             Line::from(Span::styled(
+                " TAB CONTROLS",
+                Style::default()
+                    .fg(theme.prompt.title_fg.0)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(" Ctrl+T         New tab"),
+            Line::from(" Alt+W          Close tab"),
+            Line::from(" Shift+1..9     Switch to tab by number"),
+            Line::from(" Alt+T          Tab list popup"),
+            Line::from(""),
+            Line::from(Span::styled(
                 " EDITOR CONTROLS",
                 Style::default()
                     .fg(theme.prompt.title_fg.0)
@@ -777,6 +831,42 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
         ];
         f.render_widget(Paragraph::new(lines), area);
     }
+    if app.mode == AppMode::TabList {
+        let area = render_prompt_frame(f, f.area(), " TABS ", 60, 50, &theme.prompt);
+        let mut tab_items: Vec<ListItem> = Vec::new();
+        for (idx, tab) in app.tabs.iter().enumerate() {
+            let name = tab
+                .nav
+                .current_dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| tab.nav.current_dir.to_string_lossy().to_string());
+            let prefix = if idx == app.tab_list_cursor {
+                format!("{} ", icons.cursor)
+            } else {
+                "   ".to_string()
+            };
+            let active_tag = if idx == app.active_tab { " *" } else { "" };
+            let style = if idx == app.active_tab {
+                Style::default().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            tab_items.push(
+                ListItem::new(format!("{} {}: {}{}", prefix, idx + 1, name, active_tag)).style(style),
+            );
+        }
+        let mut tab_state = ratatui::widgets::ListState::default();
+        tab_state.select(Some(app.tab_list_cursor));
+        let tab_list = List::new(tab_items).highlight_style(
+            Style::default()
+                .bg(theme.prompt.title_fg.0)
+                .fg(theme.prompt.border_fg.0)
+                .add_modifier(Modifier::BOLD),
+        );
+        f.render_stateful_widget(tab_list, area, &mut tab_state);
+    }
     if app.mode == AppMode::ConfirmDelete {
         let area = render_prompt_frame(f, f.area(), " DELETE ", 50, 25, &theme.prompt);
         let lines = vec![
@@ -869,8 +959,13 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
                     } else {
                         ""
                     };
+                    let tab_indicator = if app.tabs.len() > 1 {
+                        format!(" [Tab {}/{}]", app.active_tab + 1, app.tabs.len())
+                    } else {
+                        String::new()
+                    };
                         let status_text = if app.nav.selected_files.is_empty() {
-                        format!(" {}{}{}  | [s]Sort | [b]Mark | [B]Bookm | [Ctrl+A]Menu | [:]Cmd | [F1]Help | [q]Quit",sort_indicator, filter_display, hidden_indicator)
+                        format!(" {}{}{}{}  | [s]Sort | [b]Mark | [B]Bookm | [Ctrl+A]Menu | [:]Cmd | [F1]Help | [q]Quit",sort_indicator, filter_display, hidden_indicator, tab_indicator)
                     } else {
                         format!(" {}{}{} | Sel: {} | [:] cp mv rm", sort_indicator, filter_display, hidden_indicator, app.nav.selected_files.len())
                     };
@@ -980,6 +1075,10 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
                 .style(Style::default().fg(sb.help_fg.0).bg(sb.help_bg.0)),
             AppMode::CreatePrompt => Paragraph::new(" [↑/↓] Select  [Enter] Confirm  [Esc] Cancel")
                 .style(Style::default().fg(sb.file_info_fg.0).bg(sb.file_info_bg.0)),
+            AppMode::TabList => Paragraph::new(
+                " [↑/↓] Select tab  [Enter] Switch  [Esc] Close",
+            )
+            .style(Style::default().fg(sb.tab_list_fg.0).bg(sb.tab_list_bg.0)),
         }
     };
     f.render_widget(bottom_bar, chunks[3]);

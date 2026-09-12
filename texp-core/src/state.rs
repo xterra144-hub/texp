@@ -68,6 +68,26 @@ impl NavState {
         }
     }
 }
+
+impl Default for NavState {
+    fn default() -> Self {
+        Self::new(PathBuf::new())
+    }
+}
+pub struct Tab {
+    pub nav: NavState,
+    pub preview: PreviewState,
+}
+
+impl Tab {
+    pub fn new(current_dir: PathBuf, preview_visible: bool) -> Self {
+        Self {
+            nav: NavState::new(current_dir),
+            preview: PreviewState::new(preview_visible),
+        }
+    }
+}
+
 pub struct PreviewState {
     pub preview_content: String,
     pub preview_visible: bool,
@@ -87,6 +107,12 @@ impl PreviewState {
             pdf_cache: Vec::new(),
             last_preview: Instant::now(),
         }
+    }
+}
+
+impl Default for PreviewState {
+    fn default() -> Self {
+        Self::new(true)
     }
 }
 pub struct EditorState {
