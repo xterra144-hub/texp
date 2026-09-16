@@ -2,7 +2,7 @@
 
 A terminal-based file manager for Windows, written in Rust.
 
-Built with `ratatui` + `crossterm` for the TUI and `ignore` for filesystem traversal. Russian-language interface.
+Built with `ratatui` + `crossterm` for the TUI and `ignore` for filesystem traversal.
 
 ## Screenshots
 
