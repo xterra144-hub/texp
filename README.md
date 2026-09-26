@@ -55,13 +55,7 @@ This separation allows alternative frontends (GUI, web) without modifying core l
 
 ```sh
 cd texp
-
-# Option A — install directly (recommended)
-cargo install --path .
-
-# Option B — just build
-cargo build --release
-
+./install 
 # The binary will be at:
 #   target/release/texp.exe  (via workspace root)
 #   texp-tui/target/release/texp.exe  (via texp-tui crate)
@@ -183,11 +177,7 @@ batch_size = 500
 - `skip_dirs` — directories to skip in indexing and `:grep` (matched case-insensitively by substring)
 - `skip_files` — filenames to skip in `:grep` (matched case-insensitively by exact name)
 
-## Build
 
-```sh
-cargo build --release
-```
 
 ### Dependencies
 

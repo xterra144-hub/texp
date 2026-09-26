@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=texp
+GenericName=File Manager
+Comment=TUI file manager 
+Exec=texp %f
+Icon=texp
+Terminal=true
+Categories=System;FileTools;FileManager;
+MimeType=inode/directory;
+StartupNotify=true
