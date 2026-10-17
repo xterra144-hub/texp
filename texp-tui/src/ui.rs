@@ -1,15 +1,20 @@
-use crate::kitty_preview::PreviewModule;
-use crate::markdown_parser::markdown_parser;
-use crate::theme::{AppearanceConfig, Icons, PromptTheme};
+use crate::{
+    kitty_preview::PreviewModule,
+    markdown_parser::markdown_parser,
+    theme::{AppearanceConfig, Icons, PromptTheme}
+};
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
-use std::fs;
-use std::time::Duration;
-use texp_core::app::{App, AppMode, editor_line_starts};
-use texp_core::state::*;
-
+use std::{
+    fs,
+    time::Duration,
+};
+use texp_core::{
+    app::{App, AppMode, editor_line_starts},
+    state::*,
+};
 fn render_prompt_frame(f: &mut Frame, full_area: Rect, title: &str, width_pct: u16, height_pct: u16, theme: &PromptTheme) -> Rect {
     let v_margin = (100 - height_pct) / 2;
     let h_margin = (100 - width_pct) / 2;
@@ -178,16 +183,44 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             String::new()
         };
 
-        let mut display_text = format!("{}{}{}", bookmark_sign, prefix, display_name);
+        let (git_marker, git_color) = match app.nav.git_statuses.get(path) {
+            Some(texp_core::git_integration::FileState::Modifired) => ("M ", Color::Yellow),
+            Some(texp_core::git_integration::FileState::Added) => ("A ", Color::Green),
+            Some(texp_core::git_integration::FileState::Untracked) => ("??", Color::Red),
+            Some(texp_core::git_integration::FileState::Renamed) => ("R ", Color::Blue),
+            Some(texp_core::git_integration::FileState::Conflicted) => ("C ", Color::Red),
+            Some(texp_core::git_integration::FileState::Deleted) => ("D ", Color::Red),
+            Some(texp_core::git_integration::FileState::Ignored) => ("! ", Color::DarkGray),
+            None => ("  ", Color::Reset),
+        };
+        let has_git = app.nav.git_statuses.contains_key(path);
+
         let is_selected = app.nav.selected_files.contains(path);
+        // Название раскрашивается по цвету git-статуса; у выделенных файлов
+        // приоритет у цвета выделения.
+        let name_color = if is_selected {
+            theme.file_list.selected_fg.0
+        } else if has_git {
+            git_color
+        } else {
+            theme.file_list.normal_fg.0
+        };
+
+        let mut spans: Vec<Span> = Vec::new();
         if is_selected {
-            display_text = format!("{}{}", icons.selected_prefix, display_text);
+            spans.push(Span::styled(
+                icons.selected_prefix.clone(),
+                Style::default().fg(theme.file_list.selected_fg.0),
+            ));
         }
-        let mut style = Style::default().fg(theme.file_list.normal_fg.0);
-        if is_selected {
-            style = style.fg(theme.file_list.selected_fg.0);
+        spans.push(Span::styled(git_marker, Style::default().fg(git_color)));
+        if !bookmark_sign.is_empty() {
+            spans.push(Span::raw(bookmark_sign));
         }
-        items.push(ListItem::new(display_text).style(style));
+        spans.push(Span::raw(prefix.clone()));
+        spans.push(Span::styled(display_name, Style::default().fg(name_color)));
+
+        items.push(ListItem::new(Line::from(spans)));
     }
     let mut file_list_state = ratatui::widgets::ListState::default();
     file_list_state.select(Some(app.nav.cursor_index.saturating_sub(start)));
@@ -623,6 +656,12 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
         f.render_widget(List::new(list_items).block(block), area);
     }
     if app.mode == AppMode::Help {
+        let git_legend = |marker: &str, color: Color, label: &str| {
+            Line::from(vec![
+                Span::styled(format!("  {:<3}", marker), Style::default().fg(color)),
+                Span::raw(label.to_string()),
+            ])
+        };
         let help_lines: Vec<Line> = vec![
             Line::from(Span::styled(
                 " KEYBINDINGS ",
@@ -650,6 +689,8 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             Line::from(" v              Open file viewer"),
             Line::from(" e/i            Open editor (in viewer mode)"),
             Line::from(" .              Toggle hidden files"),
+            Line::from(" A              Git add file"),
+            Line::from(" C              Git commit (with description)"),
             Line::from(" F1 / ?         This help"),
             Line::from(" Ctrl+A         Windows context menu"),
             Line::from(" Ctrl+B         Breadcrumbs navigation (any mode)"),
@@ -702,6 +743,21 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
             Line::from(" :du            Analyze disk usage"),
             Line::from(" :index         Rebuild file index"),
             Line::from(" :q             Quit"),
+            Line::from(""),
+            Line::from(Span::styled(
+                " GIT STATUS",
+                Style::default()
+                    .fg(theme.prompt.title_fg.0)
+                    .add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            git_legend("M", Color::Yellow, "Modified (изменён)"),
+            git_legend("A", Color::Green, "Added (добавлен)"),
+            git_legend("??", Color::Red, "Untracked (неотслеживаемый)"),
+            git_legend("R", Color::Blue, "Renamed (переименован)"),
+            git_legend("C", Color::Red, "Conflicted (конфликт)"),
+            git_legend("D", Color::Red, "Deleted (удалён)"),
+            git_legend("!", Color::DarkGray, "Ignored (игнорируемый)"),
         ];
         let total = help_lines.len();
         let title = if total > 40 {
@@ -880,6 +936,37 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
         ];
         f.render_widget(Paragraph::new(lines), area);
     }
+    if app.mode == AppMode::GitCommit {
+        let area = render_prompt_frame(f, f.area(), " GIT COMMIT ", 70, 60, &theme.prompt);
+        let title_style = if app.git_commit.cursor_in_title {
+            Style::default().fg(theme.prompt.title_fg.0).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.prompt.hint_fg.0)
+        };
+        let desc_style = if !app.git_commit.cursor_in_title {
+            Style::default().fg(theme.prompt.title_fg.0).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.prompt.hint_fg.0)
+        };
+        let lines = vec![
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" Title: ", Style::default().fg(theme.prompt.hint_fg.0)),
+                Span::styled(app.git_commit.title.clone(), title_style),
+            ]),
+            Line::from(""),
+            Line::from(vec![
+                Span::styled(" Description (Tab to edit): ", Style::default().fg(theme.prompt.hint_fg.0)),
+            ]),
+            Line::from(Span::styled(app.git_commit.description.clone(), desc_style)),
+            Line::from(""),
+            Line::from(Span::styled(
+                " [Tab] Switch field  [Enter] Commit  [Esc] Cancel ",
+                Style::default().fg(theme.prompt.hint_fg.0),
+            )),
+        ];
+        f.render_widget(Paragraph::new(lines), area);
+    }
     let sb = &theme.status_bar;
     let bottom_bar = if let Some((done, total)) = app.save_progress {
         let pct = if total > 0 {
@@ -964,10 +1051,15 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
                     } else {
                         String::new()
                     };
-                        let status_text = if app.nav.selected_files.is_empty() {
-                        format!(" {}{}{}{}  | [s]Sort | [b]Mark | [B]Bookm | [Ctrl+A]Menu | [:]Cmd | [F1]Help | [q]Quit",sort_indicator, filter_display, hidden_indicator, tab_indicator)
+                    let git_info = if let Some(branch) = &app.nav.git_branch {
+                        format!(" [{}]", branch)
                     } else {
-                        format!(" {}{}{} | Sel: {} | [:] cp mv rm", sort_indicator, filter_display, hidden_indicator, app.nav.selected_files.len())
+                        String::new()
+                    };
+                    let status_text = if app.nav.selected_files.is_empty() {
+                        format!(" {}{}{}{}{}  | [s]Sort | [b]Mark | [B]Bookm | [Ctrl+A]Menu | [:]Cmd | [F1]Help | [q]Quit",sort_indicator, filter_display, hidden_indicator, tab_indicator, git_info)
+                    } else {
+                        format!(" {}{}{}{} | Sel: {} | [:] cp mv rm", sort_indicator, filter_display, hidden_indicator, tab_indicator, git_info)
                     };
                     Paragraph::new(status_text)
                         .style(Style::default().fg(sb.normal_fg.0).bg(sb.normal_bg.0))
@@ -1079,6 +1171,10 @@ pub fn draw(f: &mut Frame, app: &mut App, appearance: &AppearanceConfig, preview
                 " [↑/↓] Select tab  [Enter] Switch  [Esc] Close",
             )
             .style(Style::default().fg(sb.tab_list_fg.0).bg(sb.tab_list_bg.0)),
+            AppMode::GitCommit => Paragraph::new(
+                " [Tab] Switch field  [Enter] Commit  [Esc] Cancel",
+            )
+            .style(Style::default().fg(sb.normal_fg.0).bg(sb.normal_bg.0)),
         }
     };
     f.render_widget(bottom_bar, chunks[3]);

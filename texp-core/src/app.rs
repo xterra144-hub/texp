@@ -1,16 +1,18 @@
-use std::collections::HashMap;
-use std::fs;
-use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
-use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
-
-use crate::config::Config;
-use crate::event::AppEvent;
-use crate::indexer::InMemoryIndex;
-use crate::state::*;
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    fs,
+    fs::File,
+    io::{BufReader,BufRead,  Write},
+    path::{Path, PathBuf},
+    sync::{mpsc, Arc},
+    time::{Duration, Instant},
+};
+use crate::{
+    config::Config,
+    event::AppEvent,
+    indexer::InMemoryIndex,
+    state::*
+};
 
 #[cfg(windows)]
 use crate::winapi_calls as shell;
@@ -35,6 +37,7 @@ pub enum AppMode {
     OpenWith,
     CreatePrompt,
     TabList,
+    GitCommit,
 }
 pub fn editor_line_starts(buf: &str) -> Vec<usize> {
     let mut starts = vec![0];
@@ -114,6 +117,7 @@ pub struct App {
     pub open_with: OpenWithState,
     pub clipboard: FileClipboardState,
     pub create_prompt: CreatePromptState,
+    pub git_commit: GitCommitState,
     pub tabs: Vec<Tab>,
     pub active_tab: usize,
     pub tab_list_cursor: usize,
@@ -187,6 +191,7 @@ impl App {
             open_with: OpenWithState::new(),
             clipboard: FileClipboardState::new(),
             create_prompt: CreatePromptState::new(),
+            git_commit: GitCommitState::new(),
             tabs: vec![Tab::new(cwd.clone(), true)],
             active_tab: 0,
             tab_list_cursor: 0,
@@ -240,7 +245,7 @@ impl App {
             let safe = !self.nav.filter_active
                 && matches!(
                     self.mode,
-                    Normal
+                          Normal
                         | Search
                         | DiskUsage
                         | GrepResults
@@ -302,6 +307,7 @@ impl App {
             OpenWith => self.handle_open_with(event),
             CreatePrompt => self.handle_create_prompt(event),
             TabList => self.handle_tab_list(event),
+            GitCommit => self.handle_git_commit(event),
         }
     }
 
@@ -385,6 +391,23 @@ impl App {
             }
             AppEvent::Char('c') => {
                 self.copy_to_clipboard();
+            }
+            AppEvent::Char('A') => {
+                // Git add для файла под курсором
+                if let Some(path) = self.nav.files.get(self.nav.cursor_index) {
+                    match crate::git_integration::git_add(&self.nav.current_dir, path) {
+                        Ok(_) => {
+                            self.set_status(format!("Git: added {}", path.display()));
+                            self.refresh_files();
+                        }
+                        Err(e) => self.set_status(format!("Git error: {}", e)),
+                    }
+                }
+            }
+            AppEvent::Char('C') => {
+                // Открыть попап для commit
+                self.mode = AppMode::GitCommit;
+                self.git_commit = GitCommitState::new();
             }
             AppEvent::Char('x') => {
                 self.cut_to_clipboard();
@@ -1303,6 +1326,49 @@ impl App {
         None
     }
 
+    fn handle_git_commit(&mut self, event: &AppEvent) -> Option<()> {
+        match event {
+            AppEvent::Escape => {
+                self.mode = AppMode::Normal;
+            }
+            AppEvent::Tab => {
+                self.git_commit.cursor_in_title = !self.git_commit.cursor_in_title;
+            }
+            AppEvent::Enter => {
+                let title = self.git_commit.title.trim().to_string();
+                if title.is_empty() {
+                    self.set_status("Git: commit title cannot be empty");
+                    return None;
+                }
+                let description = self.git_commit.description.trim().to_string();
+                match crate::git_integration::git_commit(&self.nav.current_dir, &title, &description) {
+                    Ok(_) => {
+                        self.set_status(format!("Git: committed '{}'", title));
+                        self.refresh_files();
+                        self.mode = AppMode::Normal;
+                    }
+                    Err(e) => self.set_status(format!("Git error: {}", e)),
+                }
+            }
+            AppEvent::Char(c) => {
+                if self.git_commit.cursor_in_title {
+                    self.git_commit.title.push(*c);
+                } else {
+                    self.git_commit.description.push(*c);
+                }
+            }
+            AppEvent::Backspace => {
+                if self.git_commit.cursor_in_title {
+                    self.git_commit.title.pop();
+                } else {
+                    self.git_commit.description.pop();
+                }
+            }
+            _ => {}
+        }
+        None
+    }
+
     fn save_active_tab(&mut self) {
         self.tabs[self.active_tab].nav = std::mem::take(&mut self.nav);
         self.tabs[self.active_tab].preview = std::mem::take(&mut self.preview);
@@ -1555,6 +1621,12 @@ impl App {
             self.nav.cursor_index = self.nav.files.len() - 1;
         }
         self.nav.full_files = self.nav.files.clone();
+
+        // Обновляем git-статусы
+        if let Ok(statuses) = crate::git_integration::git_statuses(&self.nav.current_dir) {
+            self.nav.git_statuses = statuses;
+        }
+        self.nav.git_branch = crate::git_integration::git_branch(&self.nav.current_dir);
     }
 
     fn sort_entries(

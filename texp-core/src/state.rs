@@ -43,6 +43,8 @@ pub struct NavState {
     pub last_dir_refresh: HashMap<PathBuf, Instant>,
     pub show_hidden: bool,
     pub filter_active: bool,
+    pub git_statuses: HashMap<PathBuf, crate::git_integration::FileState>,
+    pub git_branch: Option<String>,
 }
 
 impl NavState {
@@ -65,6 +67,8 @@ impl NavState {
             last_dir_refresh: HashMap::new(),
             show_hidden: false,
             filter_active: false,
+            git_statuses: HashMap::new(),
+            git_branch: None,
         }
     }
 }
@@ -283,6 +287,28 @@ pub struct OpenWithState {
 impl OpenWithState {
     pub fn new() -> Self {
         Self { entries: Vec::new(), cursor: 0 }
+    }
+}
+
+pub struct GitCommitState {
+    pub title: String,
+    pub description: String,
+    pub cursor_in_title: bool,
+}
+
+impl GitCommitState {
+    pub fn new() -> Self {
+        Self {
+            title: String::new(),
+            description: String::new(),
+            cursor_in_title: true,
+        }
+    }
+}
+
+impl Default for GitCommitState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

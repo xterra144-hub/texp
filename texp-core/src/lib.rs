@@ -8,6 +8,7 @@ pub mod grep;
 pub mod indexer;
 pub mod state;
 pub mod suggestions;
+pub mod git_integration;
 #[cfg(windows)]
 pub mod winapi_calls;
 #[cfg(not(windows))]
