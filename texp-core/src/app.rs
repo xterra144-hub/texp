@@ -1552,6 +1552,12 @@ impl App {
     }
 
     pub fn refresh_files(&mut self) {
+        // Всегда обновляем git-статусы
+        if let Ok(statuses) = crate::git_integration::git_statuses(&self.nav.current_dir) {
+            self.nav.git_statuses = statuses;
+        }
+        self.nav.git_branch = crate::git_integration::git_branch(&self.nav.current_dir);
+
         let now = Instant::now();
         if let Some(&last) = self.nav.last_dir_refresh.get(&self.nav.current_dir) {
             if now.duration_since(last) < Duration::from_millis(500) {
